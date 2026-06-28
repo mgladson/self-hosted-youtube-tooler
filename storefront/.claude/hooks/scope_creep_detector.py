@@ -1,0 +1,1 @@
+/Users/commander/Documents/Work/BlockFarms/github/self-hosted-bermese-employment-agency/.claude/hooks/scope_creep_detector.py

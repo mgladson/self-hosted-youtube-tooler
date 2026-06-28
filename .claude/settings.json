@@ -1,0 +1,119 @@
+{
+  "permissions": {
+    "defaultMode": "bypassPermissions",
+    "allow": [
+      "Read(*)",
+      "Grep(*)",
+      "Glob(*)",
+      "Write(*)",
+      "Edit(*)",
+      "Bash(git status*)",
+      "Bash(git diff*)",
+      "Bash(git log*)",
+      "WebFetch(*)",
+      "WebSearch(*)",
+      "Agent(*)",
+      "Skill(*)",
+      "TaskCreate(*)",
+      "TaskUpdate(*)",
+      "TaskGet(*)",
+      "TaskList(*)",
+      "TaskOutput(*)",
+      "TaskStop(*)",
+      "EnterPlanMode(*)",
+      "ExitPlanMode(*)",
+      "AskUserQuestion(*)"
+    ],
+    "deny": [
+      "Bash(rm -rf*)",
+      "Bash(git push --force*)",
+      "Write(.env*)",
+      "Edit(.env*)"
+    ]
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 -c \"import pathlib; pathlib.Path('.claude/plans/task-scope.md').unlink(missing_ok=True); tc=pathlib.Path('.claude/state/turn-counter'); tc.unlink(missing_ok=True); el=pathlib.Path('.claude/state/session-events.log'); el.unlink(missing_ok=True)\"",
+            "timeout": 3000
+          }
+        ]
+      },
+      {
+        "matcher": "compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 .claude/hooks/reinject_context.py",
+            "timeout": 5000
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 .claude/hooks/file_protection.py"
+          },
+          {
+            "type": "command",
+            "command": "python3 .claude/hooks/scope_creep_detector.py"
+          }
+        ]
+      },
+      {
+        "matcher": "Bash|Write|Edit|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 -c \"import pathlib,sys,json; cf=pathlib.Path('.claude/state/turn-counter'); cf.parent.mkdir(parents=True,exist_ok=True); n=int(cf.read_text()) if cf.exists() else 0; n+=1; cf.write_text(str(n)); print(json.dumps({'message': 'BOUNDARY CHECK (turn '+str(n)+'): Re-read CLAUDE.md. Still on original scope? No unrelated files modified?'})) if n%25==0 else None\""
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "ExitPlanMode",
+        "hooks": [
+          {
+            "type": "agent",
+            "prompt": "A plan was just approved via ExitPlanMode. You MUST generate .claude/plans/task-scope.md so the scope-creep detector can enforce the plan boundaries.\n\n1. Find the plan file: search .claude/plans/ for any .md file that is NOT task-scope.md. Use Glob with pattern '.claude/plans/*.md'. Read each match and identify the one containing plan content (implementation steps, file references, numbered action items). If nothing in .claude/plans/, fall back to searching the project root and .claude/ for recently modified plan files ('*plan*.md', '.claude/**/*.md').\n\n2. From the plan, identify:\n   - The objective (what the plan accomplishes)\n   - Which files and directories will be created or modified\n\n3. Write .claude/plans/task-scope.md with this EXACT format:\n\n# Task Scope\n\n## Objective\n<1-2 sentence summary>\n\n## Allowed Files\n- `pattern1`\n- `pattern2`\n- `.claude/plans/**`\n- `CLAUDE.md`\n(use glob patterns \u2014 e.g. `src/auth/**`, `tests/test_auth*`, `CLAUDE.md`)\n\n## Plan\n<paste the full approved plan content>\n\nIMPORTANT: The '## Allowed Files' section MUST always include `- `.claude/plans/**`` and `- `CLAUDE.md`` in addition to all files the plan intends to modify or create. Use directory globs (e.g. `src/auth/**`) when the plan references multiple files in a directory. If the plan modifies any Claude Code configuration, also include `- `.claude/**``. If you cannot find a plan file, still write .claude/plans/task-scope.md with the patterns above and note that the plan file was not found.",
+            "model": "haiku"
+          }
+        ]
+      },
+      {
+        "matcher": "Write|Edit|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 -c \"import sys,json,re,pathlib; data=json.load(sys.stdin); content=data.get('tool_input',{}).get('new_string','') or data.get('tool_input',{}).get('content',''); imports=re.findall(r'from [\\x27\\\"](.+?)[\\x27\\\"]|require\\([\\x27\\\"](.+?)[\\x27\\\"]\\)',content); [print(f'WARNING: Referenced file may not exist: {m}') for group in imports for m in group if m and not m.startswith('.') and not pathlib.Path(m).exists()]\""
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "agent",
+            "prompt": "Before this session ends, compare Claude's claimed completion against the actual state. Run 'git diff --stat' and 'git diff' to see what actually changed. Check: 1) Are there any TODO, FIXME, or placeholder comments that suggest incomplete work? 2) Are there any mocked or stubbed implementations that should be real? 3) Does the git diff cover all items the user originally requested? 4) Were any read-only or protected files modified? If anything was claimed as complete but is actually incomplete, mocked, or missing, report the discrepancy clearly.",
+            "model": "haiku"
+          },
+          {
+            "type": "command",
+            "command": "python3 -c \"print('\\n' + '='*60 + '\\n  SESSION COMPLETE \u2014 Run /signoff to persist learnings\\n  (Updates CLAUDE.md LEARNED RULES + MEMORY.md patterns)\\n' + '='*60 + '\\n')\""
+          }
+        ]
+      }
+    ]
+  }
+}

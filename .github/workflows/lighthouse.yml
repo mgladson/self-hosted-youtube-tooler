@@ -1,0 +1,276 @@
+name: Lighthouse CI
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      target_url:
+        description: "What to audit"
+        type: choice
+        required: true
+        default: "Local docker stack"
+        options:
+          - "Local docker stack"
+          - "https://findcarehelper.com"
+
+jobs:
+  lighthouse-local:
+    # Run when no external target is supplied:
+    #   - push to main / PR (always docker stack)
+    #   - manual dispatch with "Local docker stack" selected
+    if: inputs.target_url == '' || inputs.target_url == 'Local docker stack'
+    runs-on: ubuntu-latest
+    # Every backing service (postgres, valkey, minio, api, caddy, …) is gated
+    # behind the `full` profile. The prod override's always-on cookbook-*-seed
+    # services depend on profiled deps (minio/valkey), so without the profile
+    # enabled compose rejects the project ("depends on undefined service") on
+    # both up and down. Set here so it applies to every docker compose call.
+    env:
+      COMPOSE_PROFILES: full
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Create .env for CI
+        run: |
+          cp .env.example .env
+          sed -i 's/^POSTGRES_PASSWORD=$/POSTGRES_PASSWORD=ci_password/' .env
+          sed -i 's/^VALKEY_PASSWORD=$/VALKEY_PASSWORD=ci_valkey_pass_123/' .env
+          sed -i 's/^MINIO_ROOT_PASSWORD=$/MINIO_ROOT_PASSWORD=ci_minio_pass_123/' .env
+          sed -i 's/^SESSION_SECRET=$/SESSION_SECRET=ci-session-secret-not-for-production/' .env
+          sed -i 's/^ENABLE_DEV_FEATURES=$/ENABLE_DEV_FEATURES=true/' .env
+
+      - name: Start stack
+        # Lighthouse must run against the production build (next start), not
+        # next dev — dev mode drops the meta-description tag and adds HMR/dev
+        # overhead that tanks performance scores, making the audit meaningless.
+        run: docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+        timeout-minutes: 10
+
+      - name: Wait for storefront to be ready
+        # Storefront publishes no host port — Caddy is the single entry point
+        # (CADDY_PORT=80), so audit the homepage through Caddy, not :3000.
+        run: |
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost > /dev/null 2>&1; then
+              echo "Storefront is ready"
+              exit 0
+            fi
+            echo "Waiting for storefront... ($i/30)"
+            sleep 5
+          done
+          echo "Storefront failed to start"
+          docker compose -f docker-compose.yml -f docker-compose.prod.yml logs caddy storefront
+          exit 1
+
+      - name: Lighthouse — Homepage
+        id: lh-homepage
+        uses: treosh/lighthouse-ci-action@v12
+        with:
+          urls: http://localhost
+          runs: 3
+          uploadArtifacts: true
+          artifactName: lighthouse-homepage
+          configPath: .github/lighthouse/lighthouserc.json
+
+      - name: Post results summary
+        if: always()
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const fs = require('fs');
+            const path = require('path');
+
+            function parseManifest(dir) {
+              const manifestFile = path.join(dir, 'manifest.json');
+              if (!fs.existsSync(manifestFile)) return [];
+              const manifest = JSON.parse(fs.readFileSync(manifestFile, 'utf8'));
+              return manifest.map(entry => {
+                const report = JSON.parse(fs.readFileSync(entry.jsonPath, 'utf8'));
+                const url = new URL(entry.url);
+                return {
+                  page: url.pathname || '/',
+                  performance: Math.round(report.categories.performance.score * 100),
+                  accessibility: Math.round(report.categories.accessibility.score * 100),
+                  bestPractices: Math.round(report.categories['best-practices'].score * 100),
+                  seo: Math.round(report.categories.seo.score * 100),
+                };
+              });
+            }
+
+            const resultsDir = '.lighthouseci';
+            let allResults = [];
+            if (fs.existsSync(resultsDir)) {
+              allResults = parseManifest(resultsDir);
+            }
+
+            function emoji(score) {
+              if (score >= 90) return '🟢';
+              if (score >= 50) return '🟠';
+              return '🔴';
+            }
+
+            const pages = {};
+            for (const r of allResults) {
+              if (!pages[r.page]) pages[r.page] = [];
+              pages[r.page].push(r);
+            }
+
+            const summary = Object.entries(pages).map(([page, runs]) => {
+              const median = (arr) => {
+                const sorted = [...arr].sort((a, b) => a - b);
+                return sorted[Math.floor(sorted.length / 2)];
+              };
+              return {
+                page,
+                performance: median(runs.map(r => r.performance)),
+                accessibility: median(runs.map(r => r.accessibility)),
+                bestPractices: median(runs.map(r => r.bestPractices)),
+                seo: median(runs.map(r => r.seo)),
+              };
+            });
+
+            if (summary.length === 0) {
+              core.warning('No Lighthouse results found');
+              return;
+            }
+
+            let md = `## ⚡ Lighthouse Report\n\n`;
+            md += `| Page | Performance | Accessibility | Best Practices | SEO |\n`;
+            md += `|------|:-----------:|:-------------:|:--------------:|:---:|\n`;
+            for (const s of summary) {
+              md += `| \`${s.page}\` | ${emoji(s.performance)} **${s.performance}** | ${emoji(s.accessibility)} **${s.accessibility}** | ${emoji(s.bestPractices)} **${s.bestPractices}** | ${emoji(s.seo)} **${s.seo}** |\n`;
+            }
+            md += `\n<details><summary>Score key</summary>\n\n`;
+            md += `- 🟢 90–100 (good)\n- 🟠 50–89 (needs improvement)\n- 🔴 0–49 (poor)\n\n`;
+            md += `Scores are median of 3 runs.\n</details>`;
+
+            if (context.eventName === 'pull_request') {
+              const { data: comments } = await github.rest.issues.listComments({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+              });
+              const existing = comments.find(c => c.body?.includes('⚡ Lighthouse Report'));
+              if (existing) {
+                await github.rest.issues.updateComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  comment_id: existing.id,
+                  body: md,
+                });
+              } else {
+                await github.rest.issues.createComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: context.issue.number,
+                  body: md,
+                });
+              }
+            }
+
+            core.summary.addRaw(md);
+            await core.summary.write();
+
+      - name: Teardown
+        if: always()
+        run: docker compose -f docker-compose.yml -f docker-compose.prod.yml down
+
+  lighthouse-live:
+    # Run when there's a real target to audit:
+    #   - push to main (audits findcarehelper.com)
+    #   - manual dispatch with a live URL selected (anything starting with http)
+    #
+    # Known SEO warning on live: Lighthouse flags the `Content-Signal:` directive
+    # in robots.txt as an unknown directive (`robots-txt` audit fails). That line
+    # is auto-injected by Cloudflare's AI bot policy on the edge — it's not in
+    # storefront/src/app/robots.ts. It's an emerging standard Lighthouse doesn't
+    # recognize yet. To remove the warning, disable the AI bot policy in the
+    # Cloudflare dashboard; otherwise the ~0.83 SEO score on live is expected.
+    if: |
+      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'workflow_dispatch' && startsWith(inputs.target_url, 'http'))
+    runs-on: ubuntu-latest
+    env:
+      TARGET_URL: ${{ startsWith(inputs.target_url, 'http') && inputs.target_url || 'https://findcarehelper.com' }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Generate Lighthouse config with Cloudflare bypass header
+        env:
+          LIGHTHOUSE_BYPASS_TOKEN: ${{ secrets.LIGHTHOUSE_BYPASS_TOKEN }}
+        run: |
+          if [ -z "$LIGHTHOUSE_BYPASS_TOKEN" ]; then
+            echo "::error::LIGHTHOUSE_BYPASS_TOKEN secret is not set"
+            exit 1
+          fi
+          jq --arg token "$LIGHTHOUSE_BYPASS_TOKEN" \
+             '.ci.collect.settings.extraHeaders = {"x-lighthouse-bypass": $token}' \
+             .github/lighthouse/lighthouserc.json > "$RUNNER_TEMP/lhci-live.json"
+
+      - name: Lighthouse — Live homepage
+        uses: treosh/lighthouse-ci-action@v12
+        with:
+          urls: ${{ env.TARGET_URL }}
+          runs: 3
+          uploadArtifacts: true
+          artifactName: lighthouse-live-homepage
+          configPath: ${{ runner.temp }}/lhci-live.json
+
+      - name: Post live results summary
+        if: always()
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const fs = require('fs');
+            const path = require('path');
+
+            function parseManifest(dir) {
+              const manifestFile = path.join(dir, 'manifest.json');
+              if (!fs.existsSync(manifestFile)) return [];
+              const manifest = JSON.parse(fs.readFileSync(manifestFile, 'utf8'));
+              return manifest.map(entry => {
+                const report = JSON.parse(fs.readFileSync(entry.jsonPath, 'utf8'));
+                const url = new URL(entry.url);
+                return {
+                  page: `${url.origin}${url.pathname}`,
+                  performance: Math.round(report.categories.performance.score * 100),
+                  accessibility: Math.round(report.categories.accessibility.score * 100),
+                  bestPractices: Math.round(report.categories['best-practices'].score * 100),
+                  seo: Math.round(report.categories.seo.score * 100),
+                };
+              });
+            }
+
+            const results = parseManifest('.lighthouseci');
+            if (results.length === 0) {
+              core.warning('No Lighthouse results found for live audit');
+              return;
+            }
+
+            const median = (arr) => {
+              const sorted = [...arr].sort((a, b) => a - b);
+              return sorted[Math.floor(sorted.length / 2)];
+            };
+            const emoji = (s) => s >= 90 ? '🟢' : s >= 50 ? '🟠' : '🔴';
+
+            const pages = {};
+            for (const r of results) {
+              if (!pages[r.page]) pages[r.page] = [];
+              pages[r.page].push(r);
+            }
+
+            let md = `## 🌐 Lighthouse — Live\n\n`;
+            md += `| URL | Performance | Accessibility | Best Practices | SEO |\n`;
+            md += `|-----|:-----------:|:-------------:|:--------------:|:---:|\n`;
+            for (const [page, runs] of Object.entries(pages)) {
+              const p = median(runs.map(r => r.performance));
+              const a = median(runs.map(r => r.accessibility));
+              const b = median(runs.map(r => r.bestPractices));
+              const s = median(runs.map(r => r.seo));
+              md += `| \`${page}\` | ${emoji(p)} **${p}** | ${emoji(a)} **${a}** | ${emoji(b)} **${b}** | ${emoji(s)} **${s}** |\n`;
+            }
+            md += `\nMedian of 3 runs.`;
+
+            core.summary.addRaw(md);
+            await core.summary.write();

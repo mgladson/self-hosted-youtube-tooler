@@ -1,0 +1,114 @@
+Effective Date: January 1, 2026
+Last Updated: January 1, 2026
+
+SECTION 1 — Terms of Service Overview
+
+§1.1 These Terms of Service ("Terms," "Agreement") constitute a legally binding agreement between you ("User," "you," "your") and Find Care Helper ("Find Care Helper," "we," "us," "our") governing your access to and use of the website located at findcarehelper.com (the "Site") and all related services, including the purchase and download of digital products.
+
+§1.2 By accessing or using the Site, you acknowledge that you have read, understood, and agree to be bound by these Terms. If you do not agree to these Terms, you must not access or use the Site.
+
+§1.3 We reserve the right to update or modify these Terms at any time without prior notice. Your continued use of the Site following the posting of any changes constitutes acceptance of those changes. It is your responsibility to review these Terms periodically.
+
+§1.4 You must be at least sixteen (16) years of age to use this Site. By using this Site, you represent and warrant that you meet this age requirement.
+
+SECTION 2 — Definitions
+
+§2.1 For the purposes of this Agreement, the following definitions shall apply: (a) "Digital Product" means any downloadable digital file, template, design asset, font, icon set, UI kit, code template, or other digital content offered for sale on the Site; (b) "License" means the grant of rights associated with a purchased Digital Product as described in Section 5 of these Terms; (c) "Order" means a completed purchase transaction for one or more Digital Products; (d) "Account" means a registered user account on the Site; and (e) "Content" means all text, graphics, images, and other material displayed on the Site.
+
+SECTION 3 — Account Registration
+
+§3.1 To make purchases on the Site, you may be required to create an Account. You agree to provide accurate, current, and complete information during the registration process and to update such information to keep it accurate, current, and complete.
+
+§3.2 You are responsible for maintaining the confidentiality of your Account credentials, including your password. You agree to accept responsibility for all activities that occur under your Account.
+
+§3.3 You must notify us immediately of any unauthorized use of your Account or any other breach of security. We will not be liable for any loss or damage arising from your failure to protect your Account credentials.
+
+§3.4 We reserve the right to suspend or terminate your Account at any time, with or without notice, for conduct that we determine, in our sole discretion, violates these Terms, is harmful to other users, or is otherwise objectionable.
+
+SECTION 4 — Purchases and Payments
+
+§4.1 All prices displayed on the Site are in United States Dollars (USD) unless otherwise indicated. Prices are inclusive of the Digital Product and its associated License but do not include applicable taxes, which will be calculated and added at checkout where required by law.
+
+§4.2 Payment must be made in full at the time of purchase through one of our accepted payment methods. We accept major credit cards (Visa, Mastercard, American Express), PayPal, and such other payment methods as may be made available from time to time.
+
+§4.3 All payments are processed securely through third-party payment processors. Find Care Helper does not store your full credit card number or payment credentials on our servers. By providing your payment information, you authorize us to charge the applicable fees for your Order.
+
+§4.4 Upon successful payment, you will receive: (a) an email confirmation of your Order; and (b) access to download the purchased Digital Product(s). Download links are valid for a period specified in the order confirmation email.
+
+§4.5 We reserve the right to modify prices at any time without prior notice. Price changes will not affect Orders that have already been completed.
+
+SECTION 5 — Digital Product Licenses
+
+§5.1 Upon completed purchase and receipt of payment, Find Care Helper grants you a non-exclusive, non-transferable, perpetual license to use the purchased Digital Product subject to the terms of this Section.
+
+§5.2 Permitted Uses. Unless otherwise specified on the product page, you may: (a) use the Digital Product in unlimited personal and commercial projects; (b) modify or adapt the Digital Product to suit your project needs; and (c) use the Digital Product in end products created for your clients.
+
+§5.3 Prohibited Uses. You may not, under any circumstances: (a) resell, redistribute, sublicense, or share the original Digital Product files, whether modified or unmodified; (b) make the Digital Product available on any file-sharing or stock asset platform; (c) use the Digital Product in a manner that competes directly with Find Care Helper or the original creator; (d) claim authorship or ownership of the Digital Product; (e) use the Digital Product in any unlawful manner or for any unlawful purpose; or (f) use the Digital Product in connection with defamatory, obscene, or otherwise objectionable content.
+
+§5.4 The License granted herein applies to a single individual user. If you require a team or enterprise license covering multiple users, please contact us for pricing and terms.
+
+§5.5 Find Care Helper and its creators retain all intellectual property rights in and to the Digital Products. The License does not constitute a transfer of ownership.
+
+SECTION 6 — Delivery of Digital Products
+
+§6.1 All Digital Products are delivered electronically. Following a successful purchase, download links will be provided via email and through your Account dashboard.
+
+§6.2 It is your responsibility to download and securely store the Digital Product files. While we endeavor to maintain download availability, we do not guarantee perpetual access to download links and recommend downloading your files promptly after purchase.
+
+§6.3 We are not responsible for download failures caused by your internet connection, browser compatibility, firewall settings, or other factors outside our control.
+
+SECTION 7 — Refunds
+
+§7.1 Our refund policy is set forth in our separate Refund Policy page (/refund-policy), which is incorporated into these Terms by reference.
+
+§7.2 By completing a purchase, you acknowledge that you have read and agree to the terms of our Refund Policy.
+
+SECTION 8 — Intellectual Property
+
+§8.1 The Site and its entire contents, features, and functionality — including but not limited to all text, graphics, logos, icons, images, audio, video, software, and the design, selection, and arrangement thereof — are owned by Find Care Helper, its licensors, or other providers of such material and are protected by copyright, trademark, patent, trade secret, and other intellectual property or proprietary rights laws.
+
+§8.2 The Find Care Helper name, logo, and all related names, logos, product and service names, designs, and slogans are trademarks of Find Care Helper. You must not use such marks without our prior written permission.
+
+SECTION 9 — User Conduct
+
+§9.1 You agree that you will not: (a) use the Site in any manner that could disable, overburden, damage, or impair the Site; (b) use any robot, spider, scraper, or other automated means to access the Site; (c) introduce any viruses, trojan horses, worms, or other malicious or technologically harmful material; (d) attempt to gain unauthorized access to any parts of the Site or any server, computer, or database connected to the Site; (e) interfere with any other user's use or enjoyment of the Site; or (f) use the Site to transmit any unsolicited commercial communications.
+
+SECTION 10 — Disclaimer of Warranties
+
+§10.1 THE SITE AND ALL DIGITAL PRODUCTS ARE PROVIDED ON AN "AS IS" AND "AS AVAILABLE" BASIS, WITHOUT ANY WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED. TO THE FULLEST EXTENT PERMITTED BY APPLICABLE LAW, PIXELCART DISCLAIMS ALL WARRANTIES, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO IMPLIED WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, AND NON-INFRINGEMENT.
+
+§10.2 Find Care Helper does not warrant that: (a) the Site will be uninterrupted, timely, secure, or error-free; (b) the results obtained from the use of the Site or Digital Products will be accurate or reliable; or (c) any defects in the Site or Digital Products will be corrected.
+
+SECTION 11 — Limitation of Liability
+
+§11.1 TO THE MAXIMUM EXTENT PERMITTED BY APPLICABLE LAW, IN NO EVENT SHALL PIXELCART, ITS DIRECTORS, EMPLOYEES, PARTNERS, AGENTS, SUPPLIERS, OR AFFILIATES BE LIABLE FOR ANY INDIRECT, INCIDENTAL, SPECIAL, CONSEQUENTIAL, OR PUNITIVE DAMAGES, INCLUDING WITHOUT LIMITATION LOSS OF PROFITS, DATA, USE, GOODWILL, OR OTHER INTANGIBLE LOSSES, RESULTING FROM: (a) YOUR ACCESS TO OR USE OF (OR INABILITY TO ACCESS OR USE) THE SITE; (b) ANY CONDUCT OR CONTENT OF ANY THIRD PARTY ON THE SITE; (c) ANY DIGITAL PRODUCT OBTAINED FROM THE SITE; OR (d) UNAUTHORIZED ACCESS, USE, OR ALTERATION OF YOUR TRANSMISSIONS OR CONTENT.
+
+§11.2 IN NO EVENT SHALL PIXELCART'S TOTAL LIABILITY TO YOU FOR ALL CLAIMS ARISING OUT OF OR RELATING TO THESE TERMS OR YOUR USE OF THE SITE EXCEED THE AMOUNT YOU HAVE PAID TO PIXELCART IN THE TWELVE (12) MONTHS IMMEDIATELY PRECEDING THE EVENT GIVING RISE TO THE CLAIM.
+
+SECTION 12 — Indemnification
+
+§12.1 You agree to defend, indemnify, and hold harmless Find Care Helper, its directors, officers, employees, agents, licensors, and suppliers from and against any claims, liabilities, damages, judgments, awards, losses, costs, expenses, or fees (including reasonable attorneys' fees) arising out of or relating to: (a) your violation of these Terms; (b) your use of the Site or Digital Products; (c) your violation of any third-party right, including any intellectual property or privacy right; or (d) any claim that your use of a Digital Product caused damage to a third party.
+
+SECTION 13 — Governing Law and Dispute Resolution
+
+§13.1 These Terms shall be governed by and construed in accordance with the laws of the State of Delaware, United States, without regard to its conflict of law principles.
+
+§13.2 Any dispute arising out of or relating to these Terms or your use of the Site shall first be attempted to be resolved through good-faith negotiation between the parties. If the dispute cannot be resolved through negotiation within thirty (30) days, either party may submit the dispute to binding arbitration in accordance with the rules of the American Arbitration Association.
+
+§13.3 You agree that any dispute resolution proceedings will be conducted only on an individual basis and not in a class, consolidated, or representative action.
+
+SECTION 14 — Severability
+
+§14.1 If any provision of these Terms is held by a court of competent jurisdiction to be invalid, illegal, or unenforceable, such provision shall be modified to the minimum extent necessary to make it valid, legal, and enforceable. If such modification is not possible, the relevant provision shall be deemed deleted. Any modification or deletion of a provision shall not affect the validity and enforceability of the remaining provisions.
+
+SECTION 15 — Entire Agreement
+
+§15.1 These Terms, together with our Privacy Policy (/privacy-policy) and Refund Policy (/refund-policy), constitute the entire agreement between you and Find Care Helper with respect to the Site and supersede all prior and contemporaneous understandings, agreements, representations, and warranties.
+
+SECTION 16 — Contact Information
+
+§16.1 For any questions or concerns regarding these Terms of Service, please contact us at:
+
+Find Care Helper
+Email: contact@findcarehelper.com
+Website: findcarehelper.com

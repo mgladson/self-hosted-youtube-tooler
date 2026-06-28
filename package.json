@@ -1,0 +1,20 @@
+{
+  "name": "shopify-stack-clone",
+  "version": "0.1.0",
+  "private": true,
+  "workspaces": [
+    "api",
+    "storefront",
+    "admin",
+    "shared",
+    "docs"
+  ],
+  "scripts": {
+    "dev": "docker compose up",
+    "dev:build": "docker compose up --build",
+    "migrate": "node-pg-migrate --migrations-dir migrations"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

@@ -1,0 +1,327 @@
+services:
+  # ---- Infrastructure ----
+
+  postgres:
+    profiles: [full]
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    # DEV ONLY — remove in production
+    ports:
+      - "${POSTGRES_PORT}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - app-network
+
+  valkey:
+    profiles: [full]
+    image: valkey/valkey:8-alpine
+    restart: unless-stopped
+    command: valkey-server --requirepass "${VALKEY_PASSWORD:?VALKEY_PASSWORD must be set}"
+    # DEV ONLY — remove in production
+    ports:
+      - "${VALKEY_PORT}:6379"
+    volumes:
+      - valkey_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "REDISCLI_AUTH=${VALKEY_PASSWORD:?VALKEY_PASSWORD must be set} valkey-cli ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - app-network
+
+  minio:
+    profiles: [full]
+    image: minio/minio:latest
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+    # DEV ONLY — remove in production
+    ports:
+      - "${MINIO_PORT}:9000"
+      # MinIO console (:9001) is intentionally not exposed to the host.
+      # Access via: docker exec -it <container> mc alias set local http://localhost:9001 $USER $PASS
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - app-network
+
+  minio-init:
+    profiles: [full]
+    image: minio/mc:latest
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: /bin/sh
+    command: /minio-init.sh
+    volumes:
+      - ./docker/minio-init.sh:/minio-init.sh:ro
+      # Read-only seed for first-boot bucket population — git-committed
+      # images get mirrored into MinIO when the images bucket is empty.
+      # See docker/minio-init.sh for the "skip if non-empty" guard so admin
+      # uploads in prod aren't overwritten on container restart.
+      - ./storefront/public/images:/seed/images:ro
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+      MINIO_BUCKET_FILES: ${MINIO_BUCKET_FILES}
+      MINIO_BUCKET_IMAGES: ${MINIO_BUCKET_IMAGES}
+    networks:
+      - app-network
+
+  # ---- Application Services ----
+
+  api:
+    profiles: [full]
+    build:
+      context: .
+      dockerfile: api/Dockerfile
+    restart: unless-stopped
+    labels:
+      prometheus.scrape: "true"
+      prometheus.port: "9091"
+      prometheus.path: "/metrics"
+    stop_grace_period: 30s
+    ports:
+      - "${API_PORT}:3001"
+    volumes:
+      - ./api/src:/app/api/src
+      - ./shared/src:/app/shared/src
+      - ./migrations:/app/migrations
+      - ./data/admins.json:/app/data/admins.json:ro
+      - ./data/banned-ips.json:/app/data/banned-ips.json
+      - ./data/banner.json:/app/data/banner.json
+      - ./data/pages.json:/app/data/pages.json
+      - ./data/newsletter.json:/app/data/newsletter.json
+      # Admin-writable invoice + agency stores. Without these mounts the api
+      # has to create the files inside the root-owned /app/data dir as the
+      # non-root appuser → EACCES → "Failed to save invoice/agency".
+      - ./data/agencies.json:/app/data/agencies.json
+      - ./data/invoices.json:/app/data/invoices.json
+      # Mirrors the prod bind-mount so the api reads the canonical employee
+      # JSON from the repo in dev too (without it the container has no file
+      # at /app/data/current-employees.json and the api returns an empty
+      # array).
+      - ./data/current-employees.json:/app/data/current-employees.json
+      - ./data/recipes.json:/app/data/recipes.json
+    environment:
+      NODE_ENV: ${NODE_ENV}
+      API_HOST: ${API_HOST}
+      API_PORT: ${API_PORT}
+      POSTGRES_HOST: ${POSTGRES_HOST}
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      DATABASE_POOL_MAX: ${DATABASE_POOL_MAX}
+      DATABASE_POOL_IDLE_TIMEOUT: ${DATABASE_POOL_IDLE_TIMEOUT}
+      DATABASE_POOL_CONNECT_TIMEOUT: ${DATABASE_POOL_CONNECT_TIMEOUT}
+      VALKEY_HOST: ${VALKEY_HOST}
+      VALKEY_PORT: 6379
+      VALKEY_PASSWORD: ${VALKEY_PASSWORD:?VALKEY_PASSWORD must be set}
+      MINIO_ENDPOINT: ${MINIO_ENDPOINT}
+      MINIO_PORT: 9000
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+      MINIO_USE_SSL: ${MINIO_USE_SSL}
+      MINIO_BUCKET_FILES: ${MINIO_BUCKET_FILES}
+      MINIO_BUCKET_IMAGES: ${MINIO_BUCKET_IMAGES}
+      SMTP_HOST: ${SMTP_HOST}
+      SMTP_PORT: ${SMTP_PORT}
+      SMTP_SECURE: ${SMTP_SECURE}
+      SMTP_FROM: ${SMTP_FROM}
+      SMTP_USER: ${SMTP_USER}
+      SMTP_PASS: ${SMTP_PASS}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET}
+      GOOGLE_CALLBACK_URL: ${GOOGLE_CALLBACK_URL}
+      SESSION_SECRET: ${SESSION_SECRET}
+      ENABLE_DEV_FEATURES: ${ENABLE_DEV_FEATURES:-false}
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY}
+      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET}
+      STRIPE_TAX_ENABLED: ${STRIPE_TAX_ENABLED}
+      BASE_URL: ${BASE_URL}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      valkey:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      mailpit:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget --spider -q http://127.0.0.1:3001/api/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    networks:
+      - app-network
+
+  storefront:
+    build:
+      context: .
+      dockerfile: storefront/Dockerfile
+      target: development
+    restart: unless-stopped
+    # No host port publish — storefront is only reachable via Caddy at
+    # ${CADDY_PORT}, matching prod where Caddy is the single entry point.
+    # Re-add a `ports:` block here only if you specifically need to hit the
+    # storefront's Next.js dev server directly (e.g. to bypass Caddy for a
+    # network-layer debug).
+    volumes:
+      - ./storefront/src:/app/storefront/src
+      - ./storefront/public:/app/storefront/public
+      - ./storefront/next.config.ts:/app/storefront/next.config.ts
+      - ./storefront/postcss.config.mjs:/app/storefront/postcss.config.mjs
+      - ./storefront/tailwind.config.js:/app/storefront/tailwind.config.js
+    environment:
+      NODE_ENV: ${NODE_ENV}
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL}
+      API_INTERNAL_URL: ${API_INTERNAL_URL}
+      NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: ${NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY}
+    networks:
+      - app-network
+
+  admin:
+    profiles: [full]
+    build:
+      context: .
+      dockerfile: admin/Dockerfile
+      target: dev
+    restart: unless-stopped
+    ports:
+      - "${ADMIN_PORT}:3002"
+    volumes:
+      - ./admin/src:/app/admin/src
+      - ./admin/index.html:/app/admin/index.html
+      - ./admin/tailwind.config.js:/app/admin/tailwind.config.js
+      - ./admin/postcss.config.mjs:/app/admin/postcss.config.mjs
+    environment:
+      NODE_ENV: ${NODE_ENV}
+      VITE_API_URL: ${VITE_API_URL}
+    depends_on:
+      api:
+        condition: service_healthy
+    networks:
+      - app-network
+
+  docs:
+    profiles: [full]
+    build:
+      context: .
+      dockerfile: docs/Dockerfile
+    restart: unless-stopped
+    ports:
+      - "${DOCS_PORT:-3003}:3003"
+    volumes:
+      - ./docs/src:/app/docs/src
+      - ./docs/public:/app/docs/public
+      - ./docs/next.config.ts:/app/docs/next.config.ts
+      - ./docs/postcss.config.mjs:/app/docs/postcss.config.mjs
+      - ./docs/tailwind.config.js:/app/docs/tailwind.config.js
+    environment:
+      NODE_ENV: ${NODE_ENV}
+    networks:
+      - app-network
+
+  # ---- Reverse Proxy ----
+
+  caddy:
+    profiles: [full]
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "${CADDY_PORT}:80"
+      - "${CADDY_HTTPS_PORT:-443}:443"
+    volumes:
+      - ./docker/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      api:
+        condition: service_healthy
+      storefront:
+        condition: service_started
+      admin:
+        condition: service_started
+      docs:
+        condition: service_started
+    networks:
+      - app-network
+
+  # ---- Compliance Cron (commented — see docs/COMPLIANCE.md PAY-2 / AML-2) ----
+  # Enable once api/src/scripts/daily-reconciliation.ts and
+  # api/src/scripts/sanctions-rescreen.ts are implemented. The container reuses
+  # the api image; the cron itself runs as a sidecar (e.g. ofelia, supercronic)
+  # or via a k8s CronJob in production. Example:
+  #
+  # recon:
+  #   image: shopify-deliverable-website-stack-clone-api:latest
+  #   restart: "no"
+  #   command: ["node", "dist/scripts/daily-reconciliation.js"]
+  #   environment:
+  #     DATABASE_URL: ${DATABASE_URL}
+  #     STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY}
+  #     VALKEY_URL: ${VALKEY_URL}
+  #   depends_on:
+  #     postgres: { condition: service_healthy }
+  #     valkey:   { condition: service_healthy }
+  #   labels:
+  #     ofelia.enabled: "true"
+  #     ofelia.job-exec.recon.schedule: "0 3 * * *"
+  #     ofelia.job-exec.recon.command: "node dist/scripts/daily-reconciliation.js"
+  #   networks:
+  #     - app-network
+  #
+  # rescreen:
+  #   image: shopify-deliverable-website-stack-clone-api:latest
+  #   command: ["node", "dist/scripts/sanctions-rescreen.js"]
+  #   labels:
+  #     ofelia.job-exec.rescreen.schedule: "0 4 * * *"
+
+  # ---- Dev Tools ----
+
+  mailpit:
+    profiles: [full]
+    image: axllent/mailpit:latest
+    restart: unless-stopped
+    ports:
+      - "${MAILPIT_SMTP_PORT}:1025"
+      - "${MAILPIT_UI_PORT}:8025"
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8025/"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - app-network
+
+volumes:
+  postgres_data:
+  valkey_data:
+  minio_data:
+  caddy_data:
+  caddy_config:
+
+networks:
+  app-network:
+    driver: bridge

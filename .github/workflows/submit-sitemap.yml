@@ -1,0 +1,121 @@
+# Submits the sitemap to Google Search Console on demand.
+#
+# One-time setup before this action will work:
+#   1. Verify ownership of findcarehelper.com in Google Search Console
+#      (DNS TXT record on GoDaddy DNS — recommended over HTML file).
+#   2. In Google Cloud Console:
+#        - Create or pick a project
+#        - Enable the "Google Search Console API"
+#        - Create a service account, grant no roles
+#        - Create + download a JSON key for that service account
+#   3. Back in Search Console → Settings → Users and permissions → Add user.
+#      Paste the service account email (looks like *.iam.gserviceaccount.com).
+#      Grant "Full" permission.
+#   4. In this GitHub repo → Settings → Secrets and variables → Actions → New
+#      repository secret. Name: GSC_SERVICE_ACCOUNT_JSON. Value: the entire
+#      contents of the JSON key file.
+#
+# After that, trigger this workflow from the Actions tab any time.
+
+name: Submit Sitemap to Google Search Console
+
+on:
+  workflow_dispatch:
+    inputs:
+      site_url:
+        description: 'GSC site identifier (sc-domain:findcarehelper.com for domain property, or https://findcarehelper.com/ for URL-prefix property)'
+        required: true
+        default: 'sc-domain:findcarehelper.com'
+      sitemap_url:
+        description: 'Full URL of the sitemap'
+        required: true
+        default: 'https://findcarehelper.com/sitemap.xml'
+
+jobs:
+  submit:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Authenticate to Google
+        id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GSC_SERVICE_ACCOUNT_JSON }}
+          token_format: access_token
+          access_token_scopes: https://www.googleapis.com/auth/webmasters
+
+      - name: Submit sitemap
+        env:
+          ACCESS_TOKEN: ${{ steps.auth.outputs.access_token }}
+          SITE_URL: ${{ github.event.inputs.site_url }}
+          SITEMAP_URL: ${{ github.event.inputs.sitemap_url }}
+          OPERATOR: ${{ github.actor }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          ENC_SITE=$(python3 -c "import urllib.parse,sys;print(urllib.parse.quote(sys.argv[1], safe=''))" "$SITE_URL")
+          ENC_MAP=$(python3 -c "import urllib.parse,sys;print(urllib.parse.quote(sys.argv[1], safe=''))" "$SITEMAP_URL")
+          API="https://searchconsole.googleapis.com/webmasters/v3/sites/$ENC_SITE/sitemaps/$ENC_MAP"
+          AUTH="Authorization: Bearer $ACCESS_TOKEN"
+          NOW=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+          # 1. Pre-flight GET — what does GSC currently know about this sitemap?
+          PRE_HTTP=$(curl -sS -o /tmp/pre.json -w "%{http_code}" -H "$AUTH" "$API" || echo "000")
+          if [ "$PRE_HTTP" = "200" ]; then
+            PREV=$(python3 -c "import json;d=json.load(open('/tmp/pre.json'));print(d.get('lastSubmitted','(none)'))")
+            STATE="**already known to GSC** — last submitted \`$PREV\`"
+          elif [ "$PRE_HTTP" = "404" ]; then
+            PREV="(never submitted before)"
+            STATE="**first-time submission** for this property"
+          else
+            PREV="(GET returned HTTP $PRE_HTTP)"
+            STATE="pre-flight check returned HTTP $PRE_HTTP"
+          fi
+
+          echo "Pre-flight: $STATE"
+
+          # 2. PUT — submit (or re-submit) the sitemap
+          PUT_HTTP=$(curl -sS -o /tmp/put.txt -w "%{http_code}" -X PUT -H "$AUTH" "$API")
+          if [ "$PUT_HTTP" != "200" ] && [ "$PUT_HTTP" != "204" ]; then
+            echo "::error::Submission failed (HTTP $PUT_HTTP)"
+            cat /tmp/put.txt || true
+            exit 1
+          fi
+
+          # 3. Confirm — GET again to capture the new lastSubmitted
+          POST_HTTP=$(curl -sS -o /tmp/post.json -w "%{http_code}" -H "$AUTH" "$API" || echo "000")
+          if [ "$POST_HTTP" = "200" ]; then
+            NEW_TS=$(python3 -c "import json;d=json.load(open('/tmp/post.json'));print(d.get('lastSubmitted','(unknown)'))")
+            ERRORS=$(python3 -c "import json;d=json.load(open('/tmp/post.json'));print(d.get('errors','?'))")
+            WARNINGS=$(python3 -c "import json;d=json.load(open('/tmp/post.json'));print(d.get('warnings','?'))")
+          else
+            NEW_TS="(GET returned HTTP $POST_HTTP)"
+            ERRORS="?"
+            WARNINGS="?"
+          fi
+
+          # 4. Write a persistent run summary
+          {
+            echo "## Sitemap submission record"
+            echo ""
+            echo "| Field | Value |"
+            echo "|---|---|"
+            echo "| **Run completed** | \`$NOW\` |"
+            echo "| **Triggered by** | @$OPERATOR |"
+            echo "| **GSC property** | \`$SITE_URL\` |"
+            echo "| **Sitemap** | $SITEMAP_URL |"
+            echo "| **Pre-flight state** | $STATE |"
+            echo "| **Submission HTTP** | $PUT_HTTP |"
+            echo "| **GSC lastSubmitted (new)** | \`$NEW_TS\` |"
+            echo "| **Errors / Warnings reported** | $ERRORS / $WARNINGS |"
+            echo ""
+            echo "Permalink to this run: $RUN_URL"
+            echo ""
+            if [ "$PRE_HTTP" = "200" ]; then
+              echo "> ⚠️ Heads-up: this sitemap was **already** submitted (last on \`$PREV\`). Re-submitting is harmless but unnecessary."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          echo "::notice::Sitemap submitted — lastSubmitted=$NEW_TS, errors=$ERRORS, warnings=$WARNINGS"

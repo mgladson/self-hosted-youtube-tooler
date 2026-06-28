@@ -1,0 +1,84 @@
+Effective Date: January 1, 2026
+Last Updated: January 1, 2026
+
+SECTION 1 — Privacy Policy Overview
+
+§1.1 Find Care Helper ("Find Care Helper," "we," "us," or "our") respects your privacy and is committed to protecting the personal information you share with us. This Privacy Policy explains how we collect, use, disclose, and safeguard your information when you visit our website at findcarehelper.com (the "Site") or purchase our digital products.
+
+§1.2 By accessing or using the Site, you consent to the practices described in this Privacy Policy. If you do not agree with the terms of this Privacy Policy, please do not access or use the Site.
+
+§1.3 We reserve the right to make changes to this Privacy Policy at any time. We will notify you of any material changes by posting the new Privacy Policy on this page and updating the "Last Updated" date above.
+
+SECTION 2 — Data Controller
+
+§2.1 Find Care Helper is the controller and responsible for determining the purposes and means of processing your personal data in connection with the Site and our services.
+
+§2.2 If you have any questions about this Privacy Policy or our data practices, you may contact us at contact@findcarehelper.com.
+
+SECTION 3 — Information We Collect
+
+§3.1 We collect information that you provide directly to us, including but not limited to: (a) your full name; (b) email address; (c) billing address; (d) payment information (processed securely through our third-party payment processors — we do not store your full credit card number); and (e) any other information you choose to provide when contacting us or using our services.
+
+§3.2 When you visit our Site, we automatically collect certain information about your device and your visit, including: (a) your IP address; (b) browser type and version; (c) operating system; (d) referring URL; (e) pages viewed and time spent on pages; (f) date and time of your visit; and (g) other diagnostic data.
+
+§3.3 When you complete a purchase, we collect transaction information including: (a) products purchased; (b) purchase date and time; (c) transaction amount; and (d) payment method type. Full payment credentials are processed and stored exclusively by our third-party payment processors.
+
+SECTION 4 — How We Use Your Information
+
+§4.1 We use the information we collect for the following purposes: (a) to process and fulfill your orders, including sending order confirmations and download links; (b) to communicate with you regarding your account, orders, and customer support inquiries; (c) to send you marketing and promotional communications, where you have opted in to receive such communications; (d) to improve, personalize, and expand our Site and services; (e) to understand and analyze how you use our Site; (f) to detect, prevent, and address technical issues, fraud, or illegal activity; and (g) to comply with legal obligations.
+
+§4.2 We will only use your personal data for the purposes for which we collected it, unless we reasonably consider that we need to use it for another reason that is compatible with the original purpose.
+
+SECTION 5 — Cookies and Tracking Technologies
+
+§5.1 We use cookies and similar tracking technologies to track activity on our Site and hold certain information. Cookies are files with a small amount of data which may include an anonymous unique identifier.
+
+§5.2 We use the following types of cookies: (a) Strictly Necessary Cookies — required for the operation of our Site, including session management and shopping cart functionality; (b) Analytical Cookies — allow us to recognize and count the number of visitors and to see how visitors move around our Site; and (c) Functional Cookies — used to recognize you when you return to our Site and to personalize content for you.
+
+§5.3 You can instruct your browser to refuse all cookies or to indicate when a cookie is being sent. However, if you do not accept cookies, you may not be able to use some features of our Site.
+
+SECTION 6 — Disclosure of Your Information
+
+§6.1 We may share your information with the following categories of third parties: (a) Payment Processors — to process your payment transactions securely (e.g., Stripe, PayPal); (b) Email Service Providers — to send transactional and marketing emails on our behalf; (c) Analytics Providers — to help us understand Site usage and improve our services; and (d) Hosting and Infrastructure Providers — to store and serve Site content and data.
+
+§6.2 We may also disclose your information: (a) to comply with any court order, law, or legal process, including responding to any government or regulatory request; (b) to enforce our Terms of Service and other agreements; (c) if we believe disclosure is necessary to protect the rights, property, or safety of Find Care Helper, our customers, or others; and (d) in connection with a merger, acquisition, or sale of all or a portion of our assets.
+
+§6.3 We do not sell, rent, or trade your personal information to third parties for their marketing purposes.
+
+SECTION 7 — Data Retention
+
+§7.1 We retain your personal data only for as long as is necessary for the purposes set out in this Privacy Policy. We will retain and use your personal data to the extent necessary to comply with our legal obligations, resolve disputes, and enforce our agreements.
+
+§7.2 Transaction records are retained for a minimum of seven (7) years in accordance with applicable tax and accounting regulations.
+
+SECTION 8 — Data Security
+
+§8.1 We implement appropriate technical and organizational security measures to protect your personal data against unauthorized access, alteration, disclosure, or destruction. These measures include encryption of data in transit (TLS/SSL), secure storage of data at rest, and regular security assessments.
+
+§8.2 While we strive to protect your personal information, no method of transmission over the Internet or method of electronic storage is 100% secure. We cannot guarantee the absolute security of your data.
+
+SECTION 9 — Your Rights
+
+§9.1 Depending on your jurisdiction, you may have the following rights regarding your personal data: (a) the right to access — you may request a copy of the personal data we hold about you; (b) the right to rectification — you may request that we correct any inaccurate or incomplete personal data; (c) the right to erasure — you may request that we delete your personal data, subject to certain exceptions; (d) the right to restrict processing — you may request that we limit the processing of your personal data; (e) the right to data portability — you may request that we transfer your personal data to another organization or directly to you; and (f) the right to object — you may object to our processing of your personal data for direct marketing purposes.
+
+§9.2 To exercise any of these rights, please contact us at contact@findcarehelper.com. We will respond to your request within thirty (30) days.
+
+§9.3 You may opt out of receiving marketing emails from us by clicking the "unsubscribe" link in any marketing email or by contacting us directly. Please note that you may still receive transactional emails related to your purchases.
+
+SECTION 10 — Children's Privacy
+
+§10.1 Our Site is not intended for individuals under the age of sixteen (16). We do not knowingly collect personal data from children under 16. If we become aware that we have collected personal data from a child under 16, we will take steps to delete such information promptly.
+
+SECTION 11 — International Data Transfers
+
+§11.1 Your information may be transferred to and maintained on servers located outside of your state, province, country, or other governmental jurisdiction where data protection laws may differ from those of your jurisdiction.
+
+§11.2 By using our Site and providing us with information, you consent to the transfer of your information to facilities located in the jurisdictions where we and our service providers operate.
+
+SECTION 12 — Contact Information
+
+§12.1 For any questions or concerns regarding this Privacy Policy or our data practices, please contact us at:
+
+Find Care Helper
+Email: contact@findcarehelper.com
+Website: findcarehelper.com

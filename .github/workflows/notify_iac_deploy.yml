@@ -1,0 +1,39 @@
+---
+name: "Notify IAC deploy"
+
+on:
+  push:
+    branches:
+      - main
+    # Don't dispatch a full webapp deploy for pushes that ONLY touch these.
+    # A commit that touches BOTH a real source file AND one of these paths
+    # still fires the workflow — paths-ignore only skips when EVERY changed
+    # file matches the filter.
+    paths-ignore:
+      - ".github/**"
+      - "**/*.md"
+      - "LICENSE"
+      - ".gitignore"
+      - ".editorconfig"
+      - ".prettier*"
+
+concurrency:
+  group: "notify-iac-deploy-${{ github.ref }}"
+  cancel-in-progress: true
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Dispatch deploy-webapp event to IAC repo
+        uses: peter-evans/repository-dispatch@v3
+        with:
+          token: ${{ secrets.IAC_REPO_DISPATCH_PAT }}
+          repository: Block-Farms/Standard-Template-Construct-IAC
+          event-type: deploy-webapp
+          client-payload: |
+            {
+              "site_id": "findcarehelper-com",
+              "git_ref": "main",
+              "source_sha": "${{ github.sha }}"
+            }

@@ -1,0 +1,192 @@
+{
+  "invoices": [
+    {
+      "id": "INV-002",
+      "issueDate": "2026-04-18",
+      "dueDate": "2026-05-22",
+      "billTo": {
+        "name": "Vince Maid Agency",
+        "address": "TBD"
+      },
+      "lineItems": [
+        {
+          "employeeSlug": "",
+          "workerName": "Naw Thay Muu",
+          "placementDate": "2026-05-26",
+          "amount": 1400
+        }
+      ],
+      "paymentReceived": 1400,
+      "createdAt": "2026-06-10T05:13:44.440Z",
+      "updatedAt": "2026-06-10T05:32:03.555Z"
+    },
+    {
+      "id": "INV-003",
+      "issueDate": "2026-05-17",
+      "dueDate": "2026-05-22",
+      "billTo": {
+        "name": "Helper Express",
+        "address": "400 Balestier Road, #02-06\nSingapore 329802",
+        "email": "sales@helperexpress.com.sg"
+      },
+      "lineItems": [
+        {
+          "employeeSlug": "",
+          "workerName": "Waa Myaing",
+          "placementDate": "2026-05-17",
+          "amount": 1400
+        }
+      ],
+      "paymentReceived": 1400,
+      "createdAt": "2026-06-10T05:15:30.319Z",
+      "updatedAt": "2026-06-10T05:15:30.319Z"
+    },
+    {
+      "id": "INV-004",
+      "issueDate": "2026-05-14",
+      "dueDate": "2026-05-23",
+      "billTo": {
+        "name": "Helper Express",
+        "address": "400 Balestier Road, #02-06\nSingapore 329802",
+        "email": "sales@helperexpress.com.sg"
+      },
+      "lineItems": [
+        {
+          "employeeSlug": "",
+          "workerName": "Eaindar Kyaw Lat",
+          "placementDate": "2026-06-10",
+          "amount": 600
+        }
+      ],
+      "paymentReceived": 600,
+      "createdAt": "2026-06-10T05:16:17.460Z",
+      "updatedAt": "2026-06-10T05:34:05.288Z"
+    },
+    {
+      "id": "INV-005",
+      "issueDate": "2026-06-05",
+      "dueDate": "2026-06-19",
+      "billTo": {
+        "name": "Helper Express",
+        "address": "400 Balestier Road, #02-06\nSingapore 329802",
+        "email": "sales@helperexpress.com.sg"
+      },
+      "lineItems": [
+        {
+          "employeeSlug": "",
+          "workerName": "Moe Aye Nwe",
+          "placementDate": "2026-06-05",
+          "amount": 1500
+        }
+      ],
+      "paymentReceived": 1500,
+      "createdAt": "2026-06-10T05:18:26.885Z",
+      "updatedAt": "2026-06-12T12:16:05.045Z"
+    },
+    {
+      "id": "INV-006",
+      "issueDate": "2026-06-11",
+      "dueDate": "2026-06-16",
+      "billTo": {
+        "name": "Helper Express",
+        "address": "400 Balestier Road, #02-24\nSingapore 329802",
+        "email": "sales@helperexpress.com.sg"
+      },
+      "lineItems": [
+        {
+          "employeeSlug": "",
+          "workerName": "Nang Khan Bo",
+          "placementDate": "2026-06-11",
+          "amount": 700
+        }
+      ],
+      "paymentReceived": 700,
+      "createdAt": "2026-06-10T05:41:41.952Z",
+      "updatedAt": "2026-06-16T10:37:40.758Z"
+    },
+    {
+      "id": "INV-007",
+      "issueDate": "2026-06-11",
+      "dueDate": "2026-06-16",
+      "billTo": {
+        "name": "Helper Express",
+        "address": "400 Balestier Road, #02-24\nSingapore 329802",
+        "email": "sales@helperexpress.com.sg"
+      },
+      "lineItems": [
+        {
+          "employeeSlug": "",
+          "workerName": "Nyein Nyein Aye",
+          "placementDate": "2026-06-11",
+          "amount": 600
+        }
+      ],
+      "paymentReceived": 600,
+      "createdAt": "2026-06-10T05:44:11.412Z",
+      "updatedAt": "2026-06-16T10:37:27.597Z"
+    },
+    {
+      "id": "INV-008",
+      "issueDate": "2026-06-12",
+      "dueDate": "2026-06-16",
+      "billTo": {
+        "name": "Helper Express",
+        "address": "400 Balestier Road, #02-24\nSingapore 329802",
+        "email": "sales@helperexpress.com.sg"
+      },
+      "lineItems": [
+        {
+          "employeeSlug": "",
+          "workerName": "Phoo Wai Paing",
+          "placementDate": "2026-06-12",
+          "amount": 650
+        }
+      ],
+      "paymentReceived": 650,
+      "createdAt": "2026-06-10T05:50:44.637Z",
+      "updatedAt": "2026-06-16T10:36:47.888Z"
+    },
+    {
+      "id": "INV-009",
+      "issueDate": "2026-06-18",
+      "dueDate": "2026-06-25",
+      "billTo": {
+        "name": "Jaya Maids",
+        "address": "21, HOUGANG STREET 51, #01-14,\nHOUGANG GREEN SHOPPING MALL,\nSingapore - 538719"
+      },
+      "lineItems": [
+        {
+          "employeeSlug": "",
+          "workerName": "Nant Ai Tha Sein",
+          "placementDate": "2026-06-18",
+          "amount": 1500
+        }
+      ],
+      "paymentReceived": 0,
+      "createdAt": "2026-06-10T05:52:23.310Z",
+      "updatedAt": "2026-06-16T09:52:38.185Z"
+    },
+    {
+      "id": "INV-010",
+      "issueDate": "2026-06-12",
+      "dueDate": "2026-06-19",
+      "billTo": {
+        "name": "Vince Maid Agency",
+        "address": "TBD"
+      },
+      "lineItems": [
+        {
+          "employeeSlug": "",
+          "workerName": "Naw Eh Mo Wah",
+          "placementDate": "2026-06-25",
+          "amount": 650
+        }
+      ],
+      "paymentReceived": 650,
+      "createdAt": "2026-06-10T05:52:58.680Z",
+      "updatedAt": "2026-06-16T18:18:37.301Z"
+    }
+  ],
+  "nextNumber": 13,
+  "updatedAt": "2026-06-16T18:18:37.301Z"
+}

@@ -1,0 +1,213 @@
+# Production overrides — use with:
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up
+#
+# Assumes a Hetzner VPS with 4-8GB RAM. Scale limits proportionally for
+# larger instances.
+#
+# Last validated against sendburmese.com running via the
+# Standard-Template-Construct-IAC repo (Ansible).
+
+services:
+  # Sync git-tracked editorial content into the prod data volume on every
+  # `docker compose up`. Cookbook content (data/recipes.json) is treated as
+  # code — pushes to main flow to prod on the next deploy without an image
+  # rebuild. Other JSON files in DATA_DIR (current-employees.json etc.)
+  # remain admin-writable and are NOT touched.
+  #
+  # Runs to completion then exits. The api waits via depends_on so the
+  # bind-mounted file is in place before the server starts. Subsequent
+  # restarts of api alone don't re-trigger the seed.
+  cookbook-seed:
+    # redis:alpine gives us redis-cli (works against Valkey — same protocol)
+    # plus sh + cp from base alpine. Smaller than installing into a plain
+    # alpine image at runtime.
+    image: redis:7-alpine
+    restart: "no"
+    entrypoint: /bin/sh
+    command:
+      - -c
+      - >-
+        mkdir -p /dest &&
+        if cmp -s /seed/recipes.json /dest/recipes.json 2>/dev/null; then
+          echo "cookbook-seed: dest already matches git — no copy needed";
+        else
+          cp /seed/recipes.json /dest/recipes.json &&
+          (redis-cli -h valkey -a "$$VALKEY_PASSWORD" DEL recipes:visible >/dev/null 2>&1 || true) &&
+          echo "cookbook-seed: synced recipes.json + invalidated cache";
+        fi
+    environment:
+      VALKEY_PASSWORD: ${VALKEY_PASSWORD:-changeme}
+    volumes:
+      - ./data:/seed:ro
+      - ${DATA_DIR:-./data}:/dest
+    networks:
+      - app-network
+    depends_on:
+      valkey:
+        condition: service_healthy
+
+  # Sync ALL git-tracked storefront images into the MinIO product-images
+  # bucket on every `docker compose up`. `minio-init` only seeds on first
+  # boot (empty bucket), so without this any optimized/updated asset (logo,
+  # hero, recipes, …) never reaches an already-populated prod bucket. Uses
+  # `mc mirror --overwrite` (no `--remove`): it UPDATES git-tracked objects
+  # but never deletes admin-uploaded files, which carry UUID names that
+  # don't collide with the repo's human-readable paths. Mirrors to the
+  # bucket root so keys line up with Caddy's `/images/*` → `/product-images/`
+  # rewrite (e.g. logo.png → product-images/logo.png). Name kept for
+  # deploy-tooling compatibility though scope is now all images, not cookbook.
+  cookbook-images-seed:
+    image: minio/mc:latest
+    restart: "no"
+    entrypoint: /bin/sh
+    command:
+      - -c
+      - >-
+        mc alias set local http://minio:9000 "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD" >/dev/null &&
+        mc mirror --overwrite --quiet /seed/ "local/$$MINIO_BUCKET_IMAGES/" &&
+        echo "cookbook-images-seed: synced storefront/public/images/ → $$MINIO_BUCKET_IMAGES/"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+      MINIO_BUCKET_IMAGES: ${MINIO_BUCKET_IMAGES}
+    volumes:
+      - ./storefront/public/images:/seed:ro
+    networks:
+      - app-network
+    depends_on:
+      minio:
+        condition: service_healthy
+
+  postgres:
+    mem_limit: 1g
+    memswap_limit: 1g
+
+  valkey:
+    mem_limit: 256m
+    memswap_limit: 256m
+    # FIX: was `--maemory` (typo) which valkey silently ignores, leaving the
+    # in-memory cap unenforced. `--maxmemory` is the correct flag.
+    command: valkey-server --maxmemory 200mb --maxmemory-policy allkeys-lru --requirepass ${VALKEY_PASSWORD:-changeme}
+    ports: !reset []
+
+  minio:
+    mem_limit: 1g
+    memswap_limit: 1g
+
+  api:
+    build:
+      context: .
+      dockerfile: api/Dockerfile
+    mem_limit: 512m
+    memswap_limit: 512m
+    environment:
+      NODE_ENV: production
+      # The standalone metrics http.Server registered in commit d0c3150
+      # listens on this port serving GET /metrics with no auth. Pair with
+      # network-layer restriction (UFW or equivalent firewall rule) — do
+      # not publish to a public interface.
+      METRICS_PORT: 9091
+      METRICS_LISTEN_ADDR: 0.0.0.0
+    # Publish metrics port on the host's internal interface only. Operator
+    # must set INTERNAL_IP in .env or substitute manually. Comment this
+    # block out if running on a single-host all-in-one setup without
+    # external Prometheus scraping.
+    ports:
+      - "${INTERNAL_IP:-127.0.0.1}:9091:9091"
+    # Informational labels — consumed by any prometheus-discovery tooling
+    # (file_sd / consul / docker_sd) that reads container labels.
+    labels:
+      prometheus.scrape: "true"
+      prometheus.port: "9091"
+      prometheus.path: "/metrics"
+    # Graceful shutdown — Fastify needs time to drain active sessions
+    # and flush logs before SIGKILL.
+    stop_grace_period: 30s
+    # Production-tuned healthcheck. start_period gives the Node/tsx watch
+    # process time to compile and register routes; retries=5 absorbs
+    # transient DB/Valkey hiccups without flapping `unhealthy`.
+    healthcheck:
+      test: ["CMD-SHELL", "wget --spider -q http://127.0.0.1:3001/api/health || exit
+  1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    # GeoIP databases (DB-IP Lite, CC BY 4.0 — attribution required on
+    # the rendered site: 'Data from <a href="https://db-ip.com/">DB-IP</a>').
+    # Operator places the .mmdb files at GEOIP_DIR before stack start;
+    # the api reads them from its project root.
+    #
+    # current-employees.json is bind-mounted from ${DATA_DIR:-./data} so the
+    # admin tab's writes persist outside the container image. Ansible must
+    # keep DATA_DIR pointed at a host path that is NOT overwritten on
+    # deploy — that path is the source of truth for prod admin state.
+    # Matches the existing per-file bind-mount pattern from base compose;
+    # operator can extend the same pattern to banner.json/pages.json/... if
+    # those JSON files also need to live outside the image.
+    volumes:
+      - ${GEOIP_DIR:-./geoip}/geoip-country.mmdb:/app/geoip-country.mmdb:ro
+      - ${GEOIP_DIR:-./geoip}/geoip-asn.mmdb:/app/geoip-asn.mmdb:ro
+      - ${DATA_DIR:-./data}/current-employees.json:/app/data/current-employees.json
+      - ${DATA_DIR:-./data}/recipes.json:/app/data/recipes.json
+      # Admin-writable invoice + agency stores. These MUST already exist in
+      # DATA_DIR with ownership writable by the container's appuser BEFORE
+      # `up` — otherwise Docker creates a directory at the path and the api
+      # fails with EISDIR. Ansible provisions them (see deploy playbook).
+      - ${DATA_DIR:-./data}/agencies.json:/app/data/agencies.json
+      - ${DATA_DIR:-./data}/invoices.json:/app/data/invoices.json
+    depends_on: !override
+      postgres:
+        condition: service_healthy
+      valkey:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      cookbook-seed:
+        condition: service_completed_successfully
+      cookbook-images-seed:
+        condition: service_completed_successfully
+
+  storefront:
+    build:
+      context: .
+      dockerfile: storefront/Dockerfile
+      target: production
+    mem_limit: 512m
+    memswap_limit: 512m
+    environment:
+      NODE_ENV: production
+
+  # Build admin static files and copy to shared volume, then exit.
+  # Caddy waits for completion before starting.
+  admin:
+    build:
+      context: .
+      dockerfile: admin/Dockerfile
+      target: prod
+    restart: "no"
+    entrypoint: ["sh", "-c", "cp -a /srv/admin/. /out/"]
+    volumes:
+      - admin_dist:/out
+
+  caddy:
+    mem_limit: 128m
+    memswap_limit: 128m
+    volumes:
+      - ./docker/Caddyfile.prod:/etc/caddy/Caddyfile:ro
+      - admin_dist:/srv/admin:ro
+    depends_on:
+      api:
+        condition: service_healthy
+      storefront:
+        condition: service_started
+      admin:
+        condition: service_completed_successfully
+
+  # Mailpit is dev-only — not included in production.
+  mailpit:
+    profiles:
+      - never
+
+volumes:
+  admin_dist:

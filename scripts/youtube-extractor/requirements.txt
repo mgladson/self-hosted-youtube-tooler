@@ -1,0 +1,22 @@
+# Python dependencies for yt-design-extractor.py
+#   pip install -r scripts/youtube-extractor/requirements.txt
+#
+# System binaries also required (NOT pip-installable):
+#   ffmpeg  — needed for keyframe / scene-change extraction.
+#             Skip it entirely by running with --transcript-only.
+#             Install: winget install ffmpeg   (or https://ffmpeg.org/download.html)
+#
+# Tesseract OCR engine — only if you use --ocr with the default tesseract engine:
+#             https://github.com/UB-Mannheim/tesseract/wiki
+
+# --- Required (transcript + metadata + tags + thumbnail) ---
+yt-dlp
+youtube-transcript-api
+
+# --- Optional: OCR of on-screen text in keyframes (--ocr) ---
+# Pillow
+# pytesseract
+# easyocr            # better for stylized text, but a large download
+
+# --- Optional: dominant color-palette extraction (--colors) ---
+# colorthief

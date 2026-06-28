@@ -1,0 +1,79 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+build/
+.next/
+out/
+
+# Testing
+coverage/
+.nyc_output/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# Docker
+docker-compose.override.yml
+
+# Logs
+*.log
+npm-debug.log*
+
+# TypeScript
+*.tsbuildinfo
+
+# MinIO data (local volumes)
+minio-data/
+
+# Runtime data files (contain user/subscriber data, security state — never commit)
+data/newsletter.json
+data/banned-ips.json
+
+# Database backups
+backups/
+
+# GeoIP databases (download separately — not committed)
+geoip-country.mmdb
+geoip-asn.mmdb
+GeoLite2-Country.mmdb
+GeoLite2-ASN.mmdb
+
+# Testing output
+test-results/
+.playwright-mcp/
+
+# Screenshots (QA verification artifacts)
+/*.png
+
+# Claude Code ephemeral state
+**/.claude/state/
+.claude/cache/
+.claude/sessions/
+.claude/logs/
+.claude/tmp/
+.claude/scratch/
+.claude/transcripts/
+.claude/plans/task-scope.md
+.claude/settings.local.json
+.claude/.last-*
+.claude/turn-counter*
+# Agent worktrees — each subagent isolation worktree has its own .git and gets
+# committed as a stray "submodule" gitlink without this rule. The worktree
+# branches themselves persist via `git worktree`; only the on-disk directory
+# is ignored.
+.claude/worktrees/

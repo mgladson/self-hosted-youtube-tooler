@@ -1,0 +1,39 @@
+{
+  "enabled": false,
+  "placements": {
+    "homepage_banner": false,
+    "homepage_in_feed": false,
+    "collection_banner": false,
+    "collection_in_grid": false,
+    "product_below_fold": false,
+    "blog_list_in_feed": false,
+    "blog_post_below_content": false,
+    "search_banner": false,
+    "search_in_grid": false,
+    "cart_bottom": false
+  },
+  "providers": {
+    "googleAdsense": {
+      "enabled": false,
+      "clientId": "",
+      "autoAds": false
+    },
+    "mediaNet": {
+      "enabled": false,
+      "customerId": "",
+      "widgetId": ""
+    },
+    "customDirect": {
+      "enabled": false
+    }
+  },
+  "settings": {
+    "respectDoNotTrack": true,
+    "disableOnCheckout": true,
+    "inFeedEveryN": 6,
+    "inGridEveryN": 8,
+    "lazyLoad": true
+  },
+  "directAds": [],
+  "updatedAt": ""
+}

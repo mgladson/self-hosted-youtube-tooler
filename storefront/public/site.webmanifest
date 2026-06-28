@@ -1,0 +1,22 @@
+{
+  "name": "Find Care Helper",
+  "short_name": "FCH",
+  "description": "Recruitment, pre-departure training, and placement of Burmese caretakers in Singapore households and partner agencies.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#f4ede3",
+  "theme_color": "#f4ede3",
+  "lang": "en",
+  "dir": "ltr",
+  "categories": ["business", "employment", "education"],
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}

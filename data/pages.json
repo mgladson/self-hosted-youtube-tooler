@@ -1,0 +1,20 @@
+{
+  "pages": {
+    "privacy-policy": {
+      "underConstruction": false
+    },
+    "terms-of-service": {
+      "underConstruction": false
+    },
+    "refund-policy": {
+      "underConstruction": false
+    },
+    "changelog": {
+      "underConstruction": false
+    },
+    "roadmap": {
+      "underConstruction": false
+    }
+  },
+  "updatedAt": ""
+}

@@ -1,0 +1,103 @@
+# Mirrors live admin state from the prod API into git, then commits whatever
+# changed. Runs on a schedule (so the workflow dropdowns can never drift) and
+# on demand (the admin "Commit" button dispatches this workflow). One job,
+# three syncs, one commit:
+#   - Employees: data/current-employees.json (backup) + the `employee` dropdown
+#     in toggle-employee.yml, from GET /api/current-employees/all.
+#   - Agencies:  data/agencies.json (backup) + the `agency` dropdown in
+#     create-invoice.yml, from GET /api/agencies.
+#   - Invoices:  data/invoices.json (backup), from GET /api/invoices.
+# Backup only — nothing here seeds data back to prod, so it never reverts admin
+# edits. (Supersedes the old "Sync Agency Dropdown" workflow.)
+#
+# Required repo secrets:
+#   EMPLOYEES_API_URL        e.g. https://findcarehelper.com/api  (shared)
+#   EMPLOYEES_SERVICE_TOKEN  matches the api's EMPLOYEES_SERVICE_TOKEN (shared)
+#   WORKFLOW_SYNC_PAT        a PAT with push access to this repo AND the
+#                            `workflow` scope (classic) / Contents: write +
+#                            Workflows: write (fine-grained) — GitHub forbids the
+#                            default GITHUB_TOKEN from committing under
+#                            .github/workflows/.
+
+name: 🔄 Sync Admin Data → Git
+
+on:
+  workflow_dispatch:
+  # Callable from other workflows (e.g. Set Employee Status) so a prod write can
+  # immediately mirror itself back into the repo seed without a manual run.
+  workflow_call:
+  schedule:
+    # Daily at 06:00 UTC — keeps the dropdowns and JSON backups fresh without
+    # commit noise. Dispatch manually any time to force an immediate refresh.
+    - cron: '0 6 * * *'
+
+# Two runs must not rewrite the files at the same time.
+concurrency:
+  group: sync-admin-data
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    permissions:
+      # GITHUB_TOKEN is used only to fetch (read); the commit is pushed with
+      # WORKFLOW_SYNC_PAT, so the built-in token needs no write.
+      contents: read
+    steps:
+      - name: Check sync token
+        env:
+          SYNC_PAT: ${{ secrets.WORKFLOW_SYNC_PAT }}
+        run: |
+          set -euo pipefail
+          if [ -z "${SYNC_PAT:-}" ]; then
+            echo "::error::WORKFLOW_SYNC_PAT is not set. It must be a PAT with push access to this repo AND the 'workflow' scope (classic) or Contents+Workflows write (fine-grained), since GitHub blocks the default GITHUB_TOKEN from committing changes under .github/workflows/."
+            exit 1
+          fi
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # Read with the default GITHUB_TOKEN and do NOT persist it. The
+          # privileged push to .github/workflows/ files is done explicitly with
+          # WORKFLOW_SYNC_PAT in the commit step, so a token problem surfaces
+          # only at the push, not at checkout.
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Sync employees + agencies + invoices (data + dropdowns)
+        env:
+          EMPLOYEES_API_URL: ${{ secrets.EMPLOYEES_API_URL }}
+          EMPLOYEES_SERVICE_TOKEN: ${{ secrets.EMPLOYEES_SERVICE_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${EMPLOYEES_API_URL:-}" ] || [ -z "${EMPLOYEES_SERVICE_TOKEN:-}" ]; then
+            echo "::error::EMPLOYEES_API_URL and EMPLOYEES_SERVICE_TOKEN secrets must be set on this repo."
+            exit 1
+          fi
+          node scripts/sync-employee-workflow-options.mjs
+          node scripts/sync-agency-workflow-options.mjs
+          node scripts/sync-invoices-backup.mjs
+          node scripts/sync-bio-data-pdfs.mjs
+
+      - name: Commit if changed
+        env:
+          GH_PAT: ${{ secrets.WORKFLOW_SYNC_PAT }}
+        run: |
+          set -euo pipefail
+          FILES="data/current-employees.json data/agencies.json data/invoices.json .github/workflows/toggle-employee.yml .github/workflows/create-invoice.yml api/assets/bio-data"
+          if git diff --quiet -- $FILES; then
+            echo "Admin data and dropdowns already up to date — nothing to commit."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add $FILES
+          git commit -m "chore: sync admin data + workflow dropdowns [skip ci]"
+          # Push only here, with the PAT — the one privileged write. A classic PAT
+          # needs `repo` + `workflow` scope (and SAML-SSO authorization if the org
+          # enforces it), or this push 401/403s while checkout above still works.
+          git push "https://x-access-token:${GH_PAT}@github.com/${GITHUB_REPOSITORY}.git" HEAD:main

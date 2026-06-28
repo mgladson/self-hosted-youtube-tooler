@@ -1,0 +1,2375 @@
+openapi: "3.1.0"
+info:
+  title: Shopify Stack Clone -- API Server
+  version: "1.0.0"
+  description: |
+    REST API for the Shopify Stack Clone (PixelForge) platform. This is the central
+    backend service handling authentication, checkout/payments, file downloads,
+    analytics, security monitoring, audit logging, support tickets, email campaigns,
+    newsletter management, content management, order reconciliation, and observability.
+
+    Built on Fastify 5 with TypeScript. All endpoints are prefixed with `/api`.
+
+    ## Authentication
+
+    Most endpoints require a session cookie (`connect.sid`) obtained via Google OAuth
+    login or the development-only direct login bypass. Admin endpoints additionally
+    require the session user to have an `adminTier` at or above the specified minimum.
+
+    ## Rate Limiting
+
+    Several public endpoints enforce per-IP rate limits using Valkey counters with TTL
+    windows. Rate-limited requests receive a `429 Too Many Requests` response.
+
+    ## Authorization Tiers
+
+    | Tier | Level | Description |
+    |------|-------|-------------|
+    | viewer | 1 | Read-only admin access |
+    | editor | 2 | Content management (banner, pages, newsletter, support) |
+    | admin | 3 | Security, audit, reconciliation, metrics |
+    | super_admin | 4 | Email campaigns |
+
+servers:
+  - url: /api
+    description: API Server (behind Caddy reverse proxy)
+
+tags:
+  - name: health
+    description: Infrastructure liveness checks
+  - name: auth
+    description: Google OAuth authentication and session management
+  - name: checkout
+    description: Cart validation, Stripe payment processing, order retrieval
+  - name: download
+    description: Token-gated digital product file downloads
+  - name: analytics
+    description: Behavioural event ingestion and reporting
+  - name: security
+    description: Bot detection, IP banning, security dashboard and reports
+  - name: audit
+    description: Tamper-evident audit log
+  - name: support
+    description: Customer support ticket management
+  - name: email
+    description: Bulk email campaign dispatch
+  - name: newsletter
+    description: Newsletter subscription and subscriber management
+  - name: banner
+    description: Storefront announcement banner configuration
+  - name: pages
+    description: Page under-construction visibility toggles
+  - name: reconciliation
+    description: Daily Stripe payment reconciliation
+  - name: metrics
+    description: Prometheus observability endpoint
+
+paths:
+  # ============================================================
+  # HEALTH
+  # ============================================================
+  /health:
+    get:
+      operationId: getHealth
+      summary: Infrastructure health check
+      description: |
+        Probes PostgreSQL, Valkey, and MinIO connectivity. Returns `ok` when all
+        services are reachable, `degraded` otherwise. Authenticated admin sessions
+        receive per-service detail; public callers receive only the aggregate status.
+      tags: [health]
+      responses:
+        "200":
+          description: All services healthy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+        "503":
+          description: One or more services unhealthy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+
+  # ============================================================
+  # AUTH
+  # ============================================================
+  /auth/google:
+    get:
+      operationId: initiateAdminOAuth
+      summary: Initiate admin Google OAuth flow
+      description: |
+        Generates a nonce, stores it in Valkey with 5-minute TTL, and redirects
+        the browser to Google's OAuth consent screen. Rate-limited to 5 attempts
+        per IP per 15 minutes to prevent nonce flooding and admin email enumeration.
+      tags: [auth]
+      responses:
+        "302":
+          description: Redirect to Google OAuth consent screen
+        "429":
+          description: Rate limited
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /auth/customer/google:
+    get:
+      operationId: initiateCustomerOAuth
+      summary: Initiate customer Google OAuth flow
+      description: |
+        Generates a nonce, stores it in Valkey, and redirects the browser to
+        Google's OAuth consent screen for customer authentication.
+      tags: [auth]
+      responses:
+        "302":
+          description: Redirect to Google OAuth consent screen
+
+  /auth/google/callback:
+    get:
+      operationId: oauthCallback
+      summary: Google OAuth callback
+      description: |
+        Handles the OAuth callback from Google. Validates the nonce (GETDEL for
+        one-time use), exchanges the authorization code for tokens, verifies the
+        ID token, checks admin email authorization (for admin role), creates a
+        server-side session, and redirects to the appropriate dashboard.
+        Failed attempts are tracked per IP with progressive ban escalation.
+      tags: [auth]
+      parameters:
+        - name: code
+          in: query
+          schema:
+            type: string
+        - name: error
+          in: query
+          schema:
+            type: string
+        - name: state
+          in: query
+          schema:
+            type: string
+          description: JSON-encoded `{role, nonce}` object
+      responses:
+        "302":
+          description: Redirect to success or error page
+        "403":
+          description: IP banned after repeated failures
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /auth/dev-login:
+    post:
+      operationId: devLogin
+      summary: Development-only direct login bypass
+      description: |
+        Available only when `NODE_ENV=development`. Creates a session directly
+        without going through Google OAuth. Useful for local development and testing.
+      tags: [auth]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                email:
+                  type: string
+                  format: email
+                  default: "test@pixelcart.com"
+                role:
+                  type: string
+                  enum: [admin, customer]
+                  default: admin
+      responses:
+        "200":
+          description: Session created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OkResponse"
+        "403":
+          description: IP banned or email not in admin list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /auth/me:
+    get:
+      operationId: getCurrentUser
+      summary: Get current session user
+      description: Returns the authenticated user object from the active session.
+      tags: [auth]
+      security:
+        - sessionCookie: []
+      responses:
+        "200":
+          description: Authenticated user
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [user]
+                properties:
+                  user:
+                    $ref: "#/components/schemas/SessionUser"
+        "401":
+          description: No active session
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /auth/logout:
+    post:
+      operationId: logout
+      summary: Destroy session
+      description: Destroys the server-side session and clears the session cookie.
+      tags: [auth]
+      responses:
+        "200":
+          description: Session destroyed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OkResponse"
+
+  # ============================================================
+  # CHECKOUT
+  # ============================================================
+  /checkout/config:
+    get:
+      operationId: getCheckoutConfig
+      summary: Get checkout configuration
+      description: Returns whether Stripe Tax calculation is enabled.
+      tags: [checkout]
+      responses:
+        "200":
+          description: Checkout configuration
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [taxEnabled]
+                properties:
+                  taxEnabled:
+                    type: boolean
+
+  /checkout/create-payment-intent:
+    post:
+      operationId: createPaymentIntent
+      summary: Create a Stripe PaymentIntent
+      description: |
+        Validates cart items against the in-memory product catalog, screens the buyer
+        email against the sanctions blocklist (OFAC compliance), optionally calculates
+        tax via Stripe Tax, creates an order in PostgreSQL, creates a Stripe
+        PaymentIntent with idempotency key, and returns the client secret for
+        front-end payment confirmation.
+
+        Rate-limited to 10 requests per IP per 60 seconds. AML velocity check flags
+        (does not block) emails with 5+ orders in 60 minutes.
+      tags: [checkout]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreatePaymentIntentRequest"
+      responses:
+        "200":
+          description: PaymentIntent created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreatePaymentIntentResponse"
+        "400":
+          description: Validation error (invalid email, empty cart, sanctions block, tax address missing)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "429":
+          description: Rate limited
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "502":
+          description: Tax calculation or Stripe PaymentIntent creation failed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "503":
+          description: Stripe not configured
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /checkout/webhook:
+    post:
+      operationId: stripeWebhook
+      summary: Stripe webhook handler
+      description: |
+        Receives Stripe webhook events. Verifies the signature using the webhook
+        secret. On `payment_intent.succeeded`, marks the order as paid, detects
+        fast-checkout anomaly (payment < 5s after PI creation), and sends an HTML
+        confirmation email.
+      tags: [checkout]
+      parameters:
+        - name: stripe-signature
+          in: header
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              description: Raw Stripe webhook event (parsed as buffer for signature verification)
+      responses:
+        "200":
+          description: Webhook processed
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [received]
+                properties:
+                  received:
+                    type: boolean
+                    const: true
+        "400":
+          description: Missing or invalid signature
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "503":
+          description: Stripe not configured
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /checkout/order/{id}:
+    get:
+      operationId: getOrder
+      summary: Get order detail with download links
+      description: |
+        Retrieves a single order by ID with its line items. Requires a valid access
+        token (passed as query parameter) verified using constant-time comparison to
+        prevent timing attacks. If the order is paid, includes presigned download
+        links for each product.
+      tags: [checkout]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: token
+          in: query
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Order access token for IDOR protection
+      responses:
+        "200":
+          description: Order detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrderDetail"
+        "400":
+          description: Invalid order ID format
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Access token not provided
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Invalid access token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Order not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  # ============================================================
+  # DOWNLOAD
+  # ============================================================
+  /download/{orderId}/{productId}:
+    get:
+      operationId: downloadProduct
+      summary: Download a purchased product file
+      description: |
+        Token-gated file download. Verifies the order token using constant-time
+        comparison, checks that the order is in `paid` status (enabling instant
+        revocation on chargeback/refund), confirms the product belongs to the order,
+        and redirects to a 5-minute MinIO presigned URL.
+      tags: [download]
+      parameters:
+        - name: orderId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: productId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: token
+          in: query
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Order access token
+      responses:
+        "302":
+          description: Redirect to MinIO presigned URL (5-minute expiry)
+        "400":
+          description: Invalid order ID
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Access token not provided
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "402":
+          description: Order not in paid status (revoked, refunded, or chargeback)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Invalid access token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Order or product not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  # ============================================================
+  # ANALYTICS
+  # ============================================================
+  /analytics/events:
+    post:
+      operationId: ingestAnalyticsEvents
+      summary: Ingest batch of behavioural tracking events
+      description: |
+        Public endpoint for anonymous front-end event ingestion. Accepts up to 50
+        events per batch. Valid event types: `page_view`, `scroll_depth`, `click`,
+        `element_visibility`, `page_exit`. Invalid events are silently dropped.
+        Page type is derived from the path automatically.
+
+        Rate-limited to 60 requests per IP per 60 seconds.
+      tags: [analytics]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AnalyticsEventsRequest"
+      responses:
+        "204":
+          description: Events ingested (or all events invalid)
+        "400":
+          description: Missing or empty events array, or batch exceeds 50
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "429":
+          description: Rate limited
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /analytics/behavior:
+    get:
+      operationId: getBehaviorAnalytics
+      summary: Aggregated behaviour analytics report
+      description: |
+        Returns a comprehensive analytics report with 6 parallel queries: summary
+        metrics, page view time series, top pages, scroll depth distribution, top
+        clicked elements, and element visibility rankings. Time bucket is automatically
+        selected (day for ranges <= 60 days, week otherwise).
+      tags: [analytics]
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: start
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date-time
+          description: Start of date range (ISO 8601)
+        - name: end
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date-time
+          description: End of date range (ISO 8601)
+      responses:
+        "200":
+          description: Analytics report
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BehaviorAnalyticsResponse"
+        "400":
+          description: Missing or invalid date parameters
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: No active session
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  # ============================================================
+  # SECURITY
+  # ============================================================
+  /security/dashboard:
+    get:
+      operationId: getSecurityDashboard
+      summary: Real-time security operations dashboard
+      description: |
+        Returns comprehensive security data from 8+ parallel queries: attack status,
+        real-time counters (requests, 429s, unique IPs), event timeline, top threat
+        actors, blocked traffic breakdown (by reason/country/UA class), rate limit
+        by endpoint, bot detection feed, auth attack stats, banned IP list,
+        infrastructure health (Valkey memory, PG connections), and checkout impact.
+
+        Degrades gracefully if `security_events` table is not yet created.
+      tags: [security]
+      security:
+        - sessionCookie: []
+      responses:
+        "200":
+          description: Security dashboard data
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SecurityDashboardResponse"
+        "403":
+          description: Requires admin tier >= admin
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /security/report:
+    get:
+      operationId: getSecurityReport
+      summary: Structured security report with actionable tasks
+      description: |
+        Generates a formal security report for a date range (max 90 days).
+        Includes executive summary, attack timeline, top threat actors, rate limit
+        and auth events, bot traffic breakdown, events by type, infrastructure alerts,
+        and auto-generated actionable tasks with severity ratings.
+        Includes GDPR Art. 6(1)(f) retention note.
+      tags: [security]
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: start
+          in: query
+          schema:
+            type: string
+            format: date-time
+          description: Start of report period (defaults to 24h ago)
+        - name: end
+          in: query
+          schema:
+            type: string
+            format: date-time
+          description: End of report period (defaults to now)
+      responses:
+        "200":
+          description: Security report
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SecurityReportResponse"
+        "400":
+          description: Invalid date format or range exceeds 90 days
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Requires admin tier >= admin
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: Report generation failed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /security/block:
+    post:
+      operationId: blockIp
+      summary: Ban an IP address or CIDR range
+      description: |
+        Adds an IP or CIDR range to the banned list. Persists to
+        `data/banned-ips.json` via the auth-guard plugin. Self-blocking prevention
+        (exact IP match). Records a ban action in the audit log.
+      tags: [security]
+      security:
+        - sessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BlockIpRequest"
+      responses:
+        "201":
+          description: IP blocked
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OkResponse"
+        "400":
+          description: Invalid IP/CIDR format or self-blocking attempt
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Requires admin tier >= admin
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: IP already blocked
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /security/block/{ip}:
+    delete:
+      operationId: unblockIp
+      summary: Unban an IP address or CIDR range
+      description: |
+        Removes an IP from the banned list via the auth-guard plugin. Immediately
+        reflected in the in-memory set (no stale window). Records an unblock action
+        in the audit log.
+      tags: [security]
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: ip
+          in: path
+          required: true
+          schema:
+            type: string
+          description: IPv4, IPv6, or CIDR range to unblock
+      responses:
+        "200":
+          description: IP unblocked
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OkResponse"
+        "403":
+          description: Requires admin tier >= admin
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: IP not found in ban list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  # ============================================================
+  # AUDIT
+  # ============================================================
+  /audit/logs:
+    get:
+      operationId: getAuditLogs
+      summary: Paginated, filterable audit log
+      description: |
+        Returns the tamper-evident audit log with pagination. Filterable by
+        resource type (banner, page, support_ticket, email_campaign, newsletter,
+        subscriber). Ordered by most recent first. Max 100 entries per page.
+      tags: [audit]
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: page
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 50
+        - name: resource_type
+          in: query
+          schema:
+            type: string
+            enum: [banner, page, support_ticket, email_campaign, newsletter, subscriber]
+      responses:
+        "200":
+          description: Paginated audit log entries
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuditLogResponse"
+        "403":
+          description: Requires admin tier >= admin
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  # ============================================================
+  # SUPPORT
+  # ============================================================
+  /support/tickets:
+    post:
+      operationId: createTicket
+      summary: Create a support ticket
+      description: |
+        Creates a new support ticket with an initial message. Subject max 500 chars,
+        body max 5000 chars. Priority defaults to `medium` if not specified or invalid.
+      tags: [support]
+      security:
+        - sessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateTicketRequest"
+      responses:
+        "201":
+          description: Ticket created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TicketSummary"
+        "400":
+          description: Missing subject or body, or content too long
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: No active session
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+    get:
+      operationId: listTickets
+      summary: List support tickets
+      description: |
+        Returns a list of support tickets. Customers see only their own tickets.
+        Admin users with editor tier or above can see all tickets, optionally
+        filtered by customer_email. Filterable by status.
+      tags: [support]
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [open, in_progress, resolved, closed]
+        - name: customer_email
+          in: query
+          schema:
+            type: string
+            format: email
+          description: Filter by customer email (admin only)
+      responses:
+        "200":
+          description: Ticket list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TicketListResponse"
+        "401":
+          description: No active session
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /support/tickets/{id}:
+    get:
+      operationId: getTicket
+      summary: Get ticket detail with message thread
+      description: |
+        Returns a single ticket with its full message thread. Customers can only
+        see their own tickets (returns 404 for unauthorized access to prevent
+        information leakage). Admin users with editor tier see all tickets.
+      tags: [support]
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Ticket detail with messages
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TicketDetailResponse"
+        "400":
+          description: Invalid ticket ID
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: No active session
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Ticket not found (or unauthorized)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+    patch:
+      operationId: updateTicket
+      summary: Update ticket status and/or priority
+      description: |
+        Updates a ticket's status and/or priority. Requires admin role with editor
+        tier or above. Writes an audit log entry for the change.
+      tags: [support]
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateTicketRequest"
+      responses:
+        "200":
+          description: Ticket updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TicketUpdateResponse"
+        "400":
+          description: Invalid ticket ID or no valid fields
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Requires admin tier >= editor
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Ticket not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /support/tickets/{id}/messages:
+    post:
+      operationId: replyToTicket
+      summary: Reply to a support ticket
+      description: |
+        Adds a message to a ticket's thread. Body max 5000 chars. Closed tickets
+        cannot receive new messages. Customers can only reply to their own tickets
+        (returns 404 for unauthorized access). Updates the ticket's `updated_at` timestamp.
+      tags: [support]
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [body]
+              properties:
+                body:
+                  type: string
+                  maxLength: 5000
+      responses:
+        "201":
+          description: Message added
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OkResponse"
+        "400":
+          description: Missing body, message too long, or ticket is closed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: No active session
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Ticket not found (or unauthorized)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  # ============================================================
+  # EMAIL
+  # ============================================================
+  /email/send:
+    post:
+      operationId: sendEmailCampaign
+      summary: Send bulk email campaign
+      description: |
+        Dispatches an email to a list of recipients sequentially. Each recipient
+        failure is collected (not thrown). The full send result is audit-logged with
+        success/failure counts. Requires `super_admin` tier.
+      tags: [email]
+      security:
+        - sessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SendEmailRequest"
+      responses:
+        "200":
+          description: Campaign dispatch result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SendEmailResponse"
+        "400":
+          description: Missing recipients, subject, or body
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Requires super_admin tier
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  # ============================================================
+  # NEWSLETTER
+  # ============================================================
+  /newsletter/settings:
+    get:
+      operationId: getNewsletterSettings
+      summary: Get newsletter enabled flag
+      description: Returns whether the newsletter signup section is currently enabled.
+      tags: [newsletter]
+      responses:
+        "200":
+          description: Newsletter settings
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [enabled]
+                properties:
+                  enabled:
+                    type: boolean
+
+    put:
+      operationId: updateNewsletterSettings
+      summary: Enable or disable newsletter subscriptions
+      description: |
+        Toggles the newsletter feature flag. Persists to `data/newsletter.json`.
+        Writes an audit log entry.
+      tags: [newsletter]
+      security:
+        - sessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [enabled]
+              properties:
+                enabled:
+                  type: boolean
+      responses:
+        "200":
+          description: Settings updated
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [enabled]
+                properties:
+                  enabled:
+                    type: boolean
+        "400":
+          description: enabled must be a boolean
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Requires admin tier >= editor
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: Failed to save settings
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /newsletter/subscribe:
+    post:
+      operationId: subscribeToNewsletter
+      summary: Subscribe an email to the newsletter
+      description: |
+        Public endpoint. Validates email format, normalizes to lowercase, checks
+        for duplicates. Customers can only subscribe their own email. Returns
+        success even for duplicates (to avoid enumeration). Requires newsletter
+        to be enabled.
+
+        Rate-limited to 5 requests per IP per 60 seconds.
+      tags: [newsletter]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email:
+                  type: string
+                  format: email
+      responses:
+        "200":
+          description: Subscribed (or already subscribed)
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, message]
+                properties:
+                  ok:
+                    type: boolean
+                    const: true
+                  message:
+                    type: string
+                    examples: ["Subscribed successfully", "Already subscribed"]
+        "400":
+          description: Invalid email or newsletter disabled
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Customer attempting to subscribe a different email
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "429":
+          description: Rate limited
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: Failed to save subscription
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /newsletter/subscribers:
+    get:
+      operationId: listSubscribers
+      summary: List all newsletter subscribers
+      description: Returns the full subscriber list with enabled flag and total count. Requires any admin session.
+      tags: [newsletter]
+      security:
+        - sessionCookie: []
+      responses:
+        "200":
+          description: Subscriber list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SubscriberListResponse"
+        "403":
+          description: Requires admin role
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /newsletter/subscribers/{email}:
+    delete:
+      operationId: removeSubscriber
+      summary: Remove a newsletter subscriber
+      description: |
+        Removes a subscriber by email. Writes an audit log entry for the deletion.
+      tags: [newsletter]
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: email
+          in: path
+          required: true
+          schema:
+            type: string
+            format: email
+          description: URL-encoded email address
+      responses:
+        "200":
+          description: Subscriber removed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OkResponse"
+        "403":
+          description: Requires admin tier >= editor
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Subscriber not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: Failed to remove subscriber
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  # ============================================================
+  # BANNER
+  # ============================================================
+  /banner:
+    get:
+      operationId: getBanner
+      summary: Get storefront announcement banner
+      description: Returns the current banner state including active flag, text, image, link, and last update timestamp.
+      tags: [banner]
+      responses:
+        "200":
+          description: Banner configuration
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BannerData"
+
+    put:
+      operationId: updateBanner
+      summary: Update storefront announcement banner
+      description: |
+        Replaces the banner configuration. Text is required when active is true.
+        Persists to `data/banner.json`. Writes an audit log entry.
+      tags: [banner]
+      security:
+        - sessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BannerUpdateRequest"
+      responses:
+        "200":
+          description: Banner updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BannerData"
+        "400":
+          description: active must be boolean, or text required when active
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Requires admin tier >= editor
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: Failed to save banner
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  # ============================================================
+  # PAGES
+  # ============================================================
+  /pages:
+    get:
+      operationId: getPages
+      summary: Get page under-construction flags
+      description: |
+        Returns the per-page under-construction state for all known content pages.
+      tags: [pages]
+      responses:
+        "200":
+          description: Page states
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PagesData"
+
+  /pages/{slug}:
+    put:
+      operationId: updatePageState
+      summary: Toggle under-construction for a content page
+      description: |
+        Sets the under-construction flag for a known content page. Valid slugs:
+        `privacy-policy`, `terms-of-service`, `refund-policy`, `changelog`, `roadmap`.
+        Persists to `data/pages.json`. Writes an audit log entry.
+      tags: [pages]
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [privacy-policy, terms-of-service, refund-policy, changelog, roadmap]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [underConstruction]
+              properties:
+                underConstruction:
+                  type: boolean
+      responses:
+        "200":
+          description: Page state updated
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [slug, underConstruction, updatedAt]
+                properties:
+                  slug:
+                    type: string
+                  underConstruction:
+                    type: boolean
+                  updatedAt:
+                    type: string
+                    format: date-time
+        "400":
+          description: underConstruction must be a boolean
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Requires admin tier >= editor
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Page slug not recognized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: Failed to save page state
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  # ============================================================
+  # RECONCILIATION
+  # ============================================================
+  /admin/reconciliation:
+    get:
+      operationId: getReconciliation
+      summary: Daily Stripe payment reconciliation report
+      description: |
+        Compares paid orders in the database against succeeded PaymentIntents in Stripe
+        for a given calendar day (UTC). Identifies four discrepancy types: missing in
+        database, PI not succeeded, amount mismatch, and missing Stripe reference.
+        Defaults to today if no date is provided.
+      tags: [reconciliation]
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: date
+          in: query
+          schema:
+            type: string
+            format: date
+          description: Calendar day to reconcile (YYYY-MM-DD, defaults to today)
+      responses:
+        "200":
+          description: Reconciliation report
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReconciliationResponse"
+        "400":
+          description: Invalid date format
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Requires admin tier >= admin
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "503":
+          description: Stripe not configured
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  # ============================================================
+  # METRICS
+  # ============================================================
+  /metrics:
+    get:
+      operationId: getMetrics
+      summary: Prometheus metrics endpoint
+      description: |
+        Returns Prometheus-format metrics including HTTP request duration/count
+        histograms, security counters (auth failures, rate limit hits, IP bans,
+        bot classifications), service health gauges, and business metric gauges
+        (revenue, orders, AOV, gross profit, products, customers) across five
+        time periods (24h, 7d, 30d, 90d, 365d). Business metrics polled from
+        PostgreSQL every 60 seconds.
+      tags: [metrics]
+      security:
+        - sessionCookie: []
+      responses:
+        "200":
+          description: Prometheus text format metrics
+          content:
+            text/plain:
+              schema:
+                type: string
+        "403":
+          description: Requires admin session
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+components:
+  securitySchemes:
+    sessionCookie:
+      type: apiKey
+      in: cookie
+      name: connect.sid
+      description: |
+        Server-side session cookie issued by the session plugin. Backed by Valkey
+        via connect-redis with a 24-hour TTL. Obtained via Google OAuth login flow
+        or the development-only `POST /api/auth/dev-login` endpoint.
+
+  schemas:
+    # ---- Common ----
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+
+    OkResponse:
+      type: object
+      required: [ok]
+      properties:
+        ok:
+          type: boolean
+          const: true
+
+    SessionUser:
+      type: object
+      required: [email, name, picture, role]
+      properties:
+        email:
+          type: string
+          format: email
+        name:
+          type: string
+        picture:
+          type: string
+          format: uri
+        role:
+          type: string
+          enum: [admin, customer]
+        adminTier:
+          type: string
+          enum: [viewer, editor, admin, super_admin]
+          description: Present only for admin role
+
+    # ---- Health ----
+    HealthResponse:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [ok, degraded]
+        services:
+          type: object
+          description: Per-service detail (admin sessions only)
+          properties:
+            postgres:
+              type: string
+              enum: [up, down]
+            valkey:
+              type: string
+              enum: [up, down]
+            minio:
+              type: string
+              enum: [up, down]
+
+    # ---- Checkout ----
+    CartItem:
+      type: object
+      required: [productId, quantity]
+      properties:
+        productId:
+          type: string
+        quantity:
+          type: integer
+          minimum: 1
+
+    BillingAddress:
+      type: object
+      required: [country]
+      properties:
+        country:
+          type: string
+          pattern: "^[A-Z]{2}$"
+          description: ISO 3166-1 alpha-2 country code
+        state:
+          type: string
+          description: Required for US orders
+        postalCode:
+          type: string
+          description: Required for US orders
+
+    CreatePaymentIntentRequest:
+      type: object
+      required: [items, email]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/CartItem"
+          minItems: 1
+        email:
+          type: string
+          format: email
+        billingAddress:
+          $ref: "#/components/schemas/BillingAddress"
+
+    CreatePaymentIntentResponse:
+      type: object
+      required: [clientSecret, orderId, orderToken, subtotal, taxAmount, grandTotal]
+      properties:
+        clientSecret:
+          type: string
+          description: Stripe PaymentIntent client secret for front-end confirmation
+        orderId:
+          type: string
+          format: uuid
+        orderToken:
+          type: string
+          format: uuid
+          description: Access token for order retrieval and downloads
+        subtotal:
+          type: integer
+          description: Cart total in cents (before tax)
+        taxAmount:
+          type: integer
+          description: Tax amount in cents (0 if tax disabled)
+        grandTotal:
+          type: integer
+          description: Total in cents (subtotal + tax)
+
+    OrderItem:
+      type: object
+      required: [productId, productName, price, quantity]
+      properties:
+        productId:
+          type: string
+        productName:
+          type: string
+        price:
+          type: integer
+          description: Price in cents
+        quantity:
+          type: integer
+
+    DownloadLink:
+      type: object
+      required: [productId, productName, url]
+      properties:
+        productId:
+          type: string
+        productName:
+          type: string
+        url:
+          type: string
+          description: Relative URL to `/api/download/{orderId}/{productId}?token={orderToken}`
+
+    OrderDetail:
+      type: object
+      required: [id, orderNumber, email, status, paymentStatus, total, taxAmount, items, downloadLinks, createdAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        orderNumber:
+          type: string
+          description: Human-readable order number (e.g. PF-123456)
+        email:
+          type: string
+          format: email
+        status:
+          type: string
+          enum: [pending, paid, refunded, chargeback]
+        paymentStatus:
+          type: string
+          enum: [pending, paid, refunded, failed]
+        total:
+          type: integer
+          description: Grand total in cents
+        taxAmount:
+          type: integer
+          description: Tax amount in cents
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/OrderItem"
+        downloadLinks:
+          type: array
+          items:
+            $ref: "#/components/schemas/DownloadLink"
+          description: Empty array if order is not paid
+        createdAt:
+          type: string
+          format: date-time
+
+    # ---- Analytics ----
+    AnalyticsEvent:
+      type: object
+      required: [type, sessionId, path, timestamp]
+      properties:
+        type:
+          type: string
+          enum: [page_view, scroll_depth, click, element_visibility, page_exit]
+        sessionId:
+          type: string
+          format: uuid
+        path:
+          type: string
+          maxLength: 500
+          description: Must start with /
+        timestamp:
+          type: number
+          description: Unix timestamp in milliseconds
+        data:
+          type: object
+          additionalProperties: true
+          description: Event-specific payload (max 2048 bytes when serialized)
+
+    AnalyticsEventsRequest:
+      type: object
+      required: [events]
+      properties:
+        events:
+          type: array
+          items:
+            $ref: "#/components/schemas/AnalyticsEvent"
+          maxItems: 50
+
+    BehaviorAnalyticsResponse:
+      type: object
+      required: [summary, pageViews, topPages, scrollDepth, topClicks, elementVisibility]
+      properties:
+        summary:
+          type: object
+          required: [totalPageViews, uniqueSessions, avgTimeOnPageMs, avgScrollDepth]
+          properties:
+            totalPageViews:
+              type: integer
+            uniqueSessions:
+              type: integer
+            avgTimeOnPageMs:
+              type: integer
+            avgScrollDepth:
+              type: integer
+              description: Percentage (0-100)
+        pageViews:
+          type: array
+          items:
+            type: object
+            required: [bucket, views, uniqueSessions]
+            properties:
+              bucket:
+                type: string
+                format: date-time
+              views:
+                type: integer
+              uniqueSessions:
+                type: integer
+        topPages:
+          type: array
+          items:
+            type: object
+            required: [path, pageType, views, uniqueSessions, avgTimeMs, avgScrollDepth]
+            properties:
+              path:
+                type: string
+              pageType:
+                type: string
+              views:
+                type: integer
+              uniqueSessions:
+                type: integer
+              avgTimeMs:
+                type: integer
+              avgScrollDepth:
+                type: integer
+        scrollDepth:
+          type: array
+          items:
+            type: object
+            required: [pageType, depth, count]
+            properties:
+              pageType:
+                type: string
+              depth:
+                type: integer
+              count:
+                type: integer
+        topClicks:
+          type: array
+          items:
+            type: object
+            required: [text, tag, href, page, count]
+            properties:
+              text:
+                type: string
+                nullable: true
+              tag:
+                type: string
+                nullable: true
+              href:
+                type: string
+                nullable: true
+              page:
+                type: string
+              count:
+                type: integer
+        elementVisibility:
+          type: array
+          items:
+            type: object
+            required: [label, page, impressions, avgVisibleMs]
+            properties:
+              label:
+                type: string
+                nullable: true
+              page:
+                type: string
+              impressions:
+                type: integer
+              avgVisibleMs:
+                type: integer
+
+    # ---- Security ----
+    BlockIpRequest:
+      type: object
+      required: [ip]
+      properties:
+        ip:
+          type: string
+          description: IPv4, IPv6 address, or CIDR range (e.g. 1.2.3.4 or 1.2.3.0/24)
+        reason:
+          type: string
+          default: Manually blocked by admin
+
+    SecurityDashboardResponse:
+      type: object
+      required: [degraded, attackStatus, attackDurationMinutes, stats, bannedIps, recentEvents, topThreatActors, rateLimitByEndpoint, blockedBreakdown, authStats, eventTimeline, infraStats, checkoutStats]
+      properties:
+        degraded:
+          type: boolean
+          description: True if security_events table is not available
+        attackStatus:
+          type: string
+          enum: [NORMAL, ELEVATED, ATTACK]
+        attackDurationMinutes:
+          type: integer
+          nullable: true
+        stats:
+          type: object
+          required: [counter429, totalReq, uniqueIps, rate429Pct]
+          properties:
+            counter429:
+              type: integer
+            totalReq:
+              type: integer
+            uniqueIps:
+              type: integer
+            rate429Pct:
+              type: number
+        bannedIps:
+          type: array
+          items:
+            type: string
+        recentEvents:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        topThreatActors:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        rateLimitByEndpoint:
+          type: array
+          items:
+            type: object
+            properties:
+              endpoint:
+                type: string
+              hits:
+                type: integer
+        blockedBreakdown:
+          type: object
+          properties:
+            byReason:
+              type: array
+              items:
+                type: object
+                additionalProperties: true
+            byCountry:
+              type: array
+              items:
+                type: object
+                additionalProperties: true
+            byUaClass:
+              type: array
+              items:
+                type: object
+                additionalProperties: true
+        authStats:
+          type: object
+          properties:
+            recentBans:
+              type: array
+              items:
+                type: object
+                additionalProperties: true
+            failedLoginsCount:
+              type: integer
+        eventTimeline:
+          type: array
+          items:
+            type: object
+            properties:
+              bucket:
+                type: string
+                format: date-time
+              total:
+                type: integer
+              blocked:
+                type: integer
+              flagged:
+                type: integer
+        infraStats:
+          type: object
+          properties:
+            valkeyMemoryMb:
+              type: number
+            pgActiveConnections:
+              type: integer
+        checkoutStats:
+          type: object
+          properties:
+            attemptsLast24h:
+              type: integer
+            successLast24h:
+              type: integer
+
+    SecurityReportResponse:
+      type: object
+      required: [period, generatedAt, preparedFor, gdprNote, summary, attackTimeline, topThreatActors, rateLimitAndAuthEvents, botTrafficBreakdown, eventsByType, infraAlerts, actionableTasks]
+      properties:
+        period:
+          type: object
+          required: [start, end]
+          properties:
+            start:
+              type: string
+              format: date-time
+            end:
+              type: string
+              format: date-time
+        generatedAt:
+          type: string
+          format: date-time
+        preparedFor:
+          type: string
+          format: email
+        gdprNote:
+          type: string
+        summary:
+          type: object
+          required: [totalEvents, blocked, flagged, uniqueIps]
+          properties:
+            totalEvents:
+              type: integer
+            blocked:
+              type: integer
+            flagged:
+              type: integer
+            uniqueIps:
+              type: integer
+        attackTimeline:
+          type: array
+          items:
+            type: object
+            required: [bucket, total, blocked, uniqueIps]
+            properties:
+              bucket:
+                type: string
+                format: date-time
+              total:
+                type: integer
+              blocked:
+                type: integer
+              uniqueIps:
+                type: integer
+        topThreatActors:
+          type: array
+          items:
+            type: object
+            required: [ip, country, totalReq, blockedReq, firstSeen, lastSeen, status]
+            properties:
+              ip:
+                type: string
+              country:
+                type: string
+                nullable: true
+              totalReq:
+                type: integer
+              blockedReq:
+                type: integer
+              firstSeen:
+                type: string
+                format: date-time
+              lastSeen:
+                type: string
+                format: date-time
+              status:
+                type: string
+        rateLimitAndAuthEvents:
+          type: array
+          items:
+            type: object
+            required: [eventType, endpoint, count, uniqueIps, lastSeen]
+            properties:
+              eventType:
+                type: string
+              endpoint:
+                type: string
+                nullable: true
+              count:
+                type: integer
+              uniqueIps:
+                type: integer
+              lastSeen:
+                type: string
+                format: date-time
+        botTrafficBreakdown:
+          type: array
+          items:
+            type: object
+            required: [uaClass, action, count]
+            properties:
+              uaClass:
+                type: string
+                nullable: true
+              action:
+                type: string
+                nullable: true
+              count:
+                type: integer
+        eventsByType:
+          type: array
+          items:
+            type: object
+            required: [eventType, count]
+            properties:
+              eventType:
+                type: string
+              count:
+                type: integer
+        infraAlerts:
+          type: object
+          properties:
+            valkeyMemoryMb:
+              type: number
+            pgActiveConnections:
+              type: integer
+        actionableTasks:
+          type: array
+          items:
+            type: object
+            required: [severity, task, evidence, action]
+            properties:
+              severity:
+                type: string
+                enum: [HIGH, MEDIUM, LOW]
+              task:
+                type: string
+              evidence:
+                type: string
+              action:
+                type: string
+
+    # ---- Audit ----
+    AuditLogEntry:
+      type: object
+      required: [id, userEmail, userName, action, resourceType, summary, createdAt]
+      properties:
+        id:
+          type: integer
+        userEmail:
+          type: string
+          format: email
+        userName:
+          type: string
+        action:
+          type: string
+        resourceType:
+          type: string
+        resourceId:
+          type: string
+          nullable: true
+        summary:
+          type: string
+        ipAddress:
+          type: string
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+
+    AuditLogResponse:
+      type: object
+      required: [logs, total, page, totalPages]
+      properties:
+        logs:
+          type: array
+          items:
+            $ref: "#/components/schemas/AuditLogEntry"
+        total:
+          type: integer
+        page:
+          type: integer
+        totalPages:
+          type: integer
+
+    # ---- Support ----
+    CreateTicketRequest:
+      type: object
+      required: [subject, body]
+      properties:
+        subject:
+          type: string
+          maxLength: 500
+        body:
+          type: string
+          maxLength: 5000
+        priority:
+          type: string
+          enum: [low, medium, high]
+          default: medium
+
+    TicketSummary:
+      type: object
+      required: [id, subject, status, priority, createdAt]
+      properties:
+        id:
+          type: integer
+        subject:
+          type: string
+        status:
+          type: string
+          enum: [open, in_progress, resolved, closed]
+        priority:
+          type: string
+          enum: [low, medium, high]
+        createdAt:
+          type: string
+          format: date-time
+
+    TicketListItem:
+      type: object
+      required: [id, customerEmail, customerName, subject, status, priority, createdAt, updatedAt]
+      properties:
+        id:
+          type: integer
+        customerEmail:
+          type: string
+          format: email
+        customerName:
+          type: string
+        subject:
+          type: string
+        status:
+          type: string
+          enum: [open, in_progress, resolved, closed]
+        priority:
+          type: string
+          enum: [low, medium, high]
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    TicketListResponse:
+      type: object
+      required: [tickets]
+      properties:
+        tickets:
+          type: array
+          items:
+            $ref: "#/components/schemas/TicketListItem"
+
+    TicketMessage:
+      type: object
+      required: [id, senderRole, senderName, senderEmail, body, createdAt]
+      properties:
+        id:
+          type: integer
+        senderRole:
+          type: string
+        senderName:
+          type: string
+        senderEmail:
+          type: string
+          format: email
+        body:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+
+    TicketDetailResponse:
+      type: object
+      required: [ticket, messages]
+      properties:
+        ticket:
+          $ref: "#/components/schemas/TicketListItem"
+        messages:
+          type: array
+          items:
+            $ref: "#/components/schemas/TicketMessage"
+
+    UpdateTicketRequest:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [open, in_progress, resolved, closed]
+        priority:
+          type: string
+          enum: [low, medium, high]
+
+    TicketUpdateResponse:
+      type: object
+      required: [id, status, priority, updatedAt]
+      properties:
+        id:
+          type: integer
+        status:
+          type: string
+          enum: [open, in_progress, resolved, closed]
+        priority:
+          type: string
+          enum: [low, medium, high]
+        updatedAt:
+          type: string
+          format: date-time
+
+    # ---- Email ----
+    EmailRecipient:
+      type: object
+      required: [email, name]
+      properties:
+        email:
+          type: string
+          format: email
+        name:
+          type: string
+
+    SendEmailRequest:
+      type: object
+      required: [recipients, subject, body]
+      properties:
+        recipients:
+          type: array
+          items:
+            $ref: "#/components/schemas/EmailRecipient"
+          minItems: 1
+        subject:
+          type: string
+        body:
+          type: string
+          description: HTML email body
+
+    SendEmailResponse:
+      type: object
+      required: [sent, failed]
+      properties:
+        sent:
+          type: integer
+          description: Number of successfully sent emails
+        failed:
+          type: integer
+          description: Number of failed sends
+        errors:
+          type: array
+          items:
+            type: string
+          description: Per-recipient error messages (present only if failures occurred)
+
+    # ---- Newsletter ----
+    Subscriber:
+      type: object
+      required: [email, subscribedAt]
+      properties:
+        email:
+          type: string
+          format: email
+        subscribedAt:
+          type: string
+          format: date-time
+
+    SubscriberListResponse:
+      type: object
+      required: [subscribers, enabled, total]
+      properties:
+        subscribers:
+          type: array
+          items:
+            $ref: "#/components/schemas/Subscriber"
+        enabled:
+          type: boolean
+        total:
+          type: integer
+
+    # ---- Banner ----
+    BannerData:
+      type: object
+      required: [active, text, imageUrl, linkUrl, linkLabel, updatedAt]
+      properties:
+        active:
+          type: boolean
+        text:
+          type: string
+        imageUrl:
+          type: string
+        linkUrl:
+          type: string
+        linkLabel:
+          type: string
+        updatedAt:
+          type: string
+          format: date-time
+
+    BannerUpdateRequest:
+      type: object
+      required: [active, text]
+      properties:
+        active:
+          type: boolean
+        text:
+          type: string
+          description: Required (non-empty) when active is true
+        imageUrl:
+          type: string
+        linkUrl:
+          type: string
+        linkLabel:
+          type: string
+
+    # ---- Pages ----
+    PagesData:
+      type: object
+      required: [pages, updatedAt]
+      properties:
+        pages:
+          type: object
+          additionalProperties:
+            type: object
+            required: [underConstruction]
+            properties:
+              underConstruction:
+                type: boolean
+          description: Keys are page slugs (e.g. privacy-policy, terms-of-service)
+        updatedAt:
+          type: string
+          format: date-time
+
+    # ---- Reconciliation ----
+    ReconciliationDiscrepancy:
+      type: object
+      required: [type, detail]
+      properties:
+        type:
+          type: string
+          enum: [missing_in_db, pi_not_succeeded, amount_mismatch, no_stripe_reference]
+        piId:
+          type: string
+          nullable: true
+        orderId:
+          type: string
+          format: uuid
+          nullable: true
+        orderNumber:
+          type: string
+          nullable: true
+        detail:
+          type: string
+
+    ReconciliationResponse:
+      type: object
+      required: [date, generatedAt, summary, discrepancies, status]
+      properties:
+        date:
+          type: string
+          format: date
+        generatedAt:
+          type: string
+          format: date-time
+        summary:
+          type: object
+          required: [dbPaidOrders, stripeSucceededPIs, discrepancyCount]
+          properties:
+            dbPaidOrders:
+              type: integer
+            stripeSucceededPIs:
+              type: integer
+            discrepancyCount:
+              type: integer
+        discrepancies:
+          type: array
+          items:
+            $ref: "#/components/schemas/ReconciliationDiscrepancy"
+        status:
+          type: string
+          enum: [CLEAN, DISCREPANCIES_FOUND]

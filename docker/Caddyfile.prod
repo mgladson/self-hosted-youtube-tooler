@@ -1,0 +1,109 @@
+# CADDY_HOSTNAME controls TLS behaviour:
+#   - dev (unset)          → :80  HTTP-only, no certs needed
+#   - prod (set to domain) → Caddy auto-obtains Let's Encrypt TLS
+# Example: CADDY_HOSTNAME=store.example.com
+{$CADDY_HOSTNAME::80} {
+	log {
+		output stdout
+		format json
+		level INFO
+	}
+
+	encode zstd gzip
+
+	# Security headers applied to every response.
+	# Caddy passes CF-Connecting-IP through and adds X-Forwarded-For / X-Forwarded-Proto.
+	# Fastify uses getClientIp() to prefer CF-Connecting-IP; trustProxy:1 governs
+	# request.ip as a fallback for non-Cloudflare environments.
+	header {
+		X-Content-Type-Options    "nosniff"
+		X-Frame-Options           "SAMEORIGIN"
+		Referrer-Policy           "strict-origin-when-cross-origin"
+		X-XSS-Protection          "0"
+		Permissions-Policy        "geolocation=(), microphone=(), camera=()"
+		# HSTS — tells browsers to enforce HTTPS for 1 year (no-op on plain HTTP)
+		Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+		# Remove server fingerprint
+		-Server
+	}
+
+	# Honeypot paths — proxy to API for bot detection and logging
+	@honeypot {
+		path /wp-login.php /.env /phpMyAdmin* /admin.php /xmlrpc.php /wp-admin* /setup.php
+	}
+	handle @honeypot {
+		reverse_proxy api:3001
+	}
+
+	# Redirect /admin to /admin/ for SPA routing
+	@admin-exact path /admin
+	redir @admin-exact /admin/ permanent
+
+	# ---- API ----
+	handle /api/* {
+		header Content-Security-Policy "default-src 'none'; frame-ancestors 'none'"
+		reverse_proxy api:3001
+	}
+
+	# ---- Image proxy → MinIO product-images bucket ----
+	# `handle_path` auto-strips the matched prefix so a single rewrite
+	# prepends the bucket name correctly. The previous form (`handle` +
+	# `uri strip_prefix` + `rewrite`) hit Caddy's directive-ordering rule
+	# where `rewrite` runs before `uri`, leaving `{uri}` un-stripped and
+	# making MinIO see `/product-images/images/...` (double-prefixed) → 404.
+	handle_path /images/* {
+		header Cache-Control "public, max-age=86400, immutable"
+		rewrite * /product-images{uri}
+		reverse_proxy minio:9000 {
+			header_up Host minio:9000
+		}
+	}
+
+	# ---- Docs ----
+	handle /docs* {
+		reverse_proxy docs:3003
+	}
+
+	# ---- Admin SPA (production: static files) ----
+	handle /admin/* {
+		header Content-Security-Policy "default-src 'self'; script-src 'self' 'sha256-C31+Gc1I5FVEMj4JEy+T9zqwD+UIa24RtJs+aXVHOvk='; connect-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; img-src 'self' data: blob:; font-src 'self' https://fonts.gstatic.com; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
+		uri strip_prefix /admin
+		try_files {path} /index.html
+		file_server {
+			root /srv/admin
+		}
+	}
+
+	# ---- Static asset caching (hashed filenames = safe to cache forever) ----
+	handle /_next/static/* {
+		header Cache-Control "public, max-age=31536000, immutable"
+		reverse_proxy storefront:3000
+	}
+
+	# ---- Next.js optimized image caching ----
+	handle /_next/image/* {
+		reverse_proxy storefront:3000 {
+			header_down Cache-Control "public, max-age=86400, stale-while-revalidate=604800"
+		}
+	}
+
+	# ---- Sitemap & robots cache headers ----
+	handle /sitemap.xml {
+		reverse_proxy storefront:3000 {
+			header_down Cache-Control "public, max-age=3600, s-maxage=3600"
+		}
+	}
+	handle /robots.txt {
+		reverse_proxy storefront:3000 {
+			header_down Cache-Control "public, max-age=86400, s-maxage=86400"
+		}
+	}
+
+	# ---- Storefront (default catch-all) ----
+	# CSP is set by Next.js middleware (storefront/middleware.ts) with per-request nonces
+	handle {
+		reverse_proxy storefront:3000 {
+			header_down Cache-Control "public, max-age=0, s-maxage=60, stale-while-revalidate=300"
+		}
+	}
+}
