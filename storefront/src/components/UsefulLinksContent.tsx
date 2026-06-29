@@ -1,5 +1,3 @@
-"use client";
-
 import { PageShell } from "./PageShell";
 
 const TOOLS = [
@@ -23,7 +21,7 @@ export function UsefulLinksContent() {
   return (
     <PageShell
       title="Useful Links"
-      intro="A few outside tools that pair well with the extractor — for prepping thumbnails and audio before you upload."
+      intro="A few outside tools that pair well with the extractor, for prepping thumbnails and audio before you upload."
     >
       <ul className="space-y-6">
         {TOOLS.map((tool) => (

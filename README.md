@@ -195,7 +195,7 @@ Enables country-level geolocation in the security dashboard.
 
 ```sh
 # 1. Clone the repository
-git clone <repo-url> && cd shopify-stack-clone
+git clone <repo-url> && cd youtube-tooler
 
 # 2. Copy the environment template and fill in required values
 cp .env.example .env

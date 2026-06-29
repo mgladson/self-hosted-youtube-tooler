@@ -3,6 +3,7 @@ import { OAuth2Client } from 'google-auth-library';
 import type { FastifyInstance } from 'fastify';
 import { config } from '../config.js';
 import { getClientIp } from '../lib/client-ip.js';
+import { resolveEntitlement, getUsageSnapshot } from '../lib/entitlement.js';
 
 type OAuthState = {
   role: 'admin' | 'customer';
@@ -223,10 +224,22 @@ export async function authRoutes(fastify: FastifyInstance) {
   }
 
   fastify.get('/api/auth/me', async (request, reply) => {
+    reply.header('Cache-Control', 'no-store');
     if (!request.session?.user) {
       return reply.send({ user: null });
     }
-    return reply.send({ user: request.session.user });
+    const user = request.session.user;
+    // Customers carry a billing plan + daily tool usage; admins do not.
+    if (user.role !== 'customer') {
+      return reply.send({ user });
+    }
+    const ent = await resolveEntitlement(fastify, request);
+    const usage = await getUsageSnapshot(fastify, ent);
+    return reply.send({
+      user,
+      subscription: { plan: ent.isPro ? 'pro' : 'free' },
+      usage,
+    });
   });
 
   fastify.post('/api/auth/logout', async (request, reply) => {

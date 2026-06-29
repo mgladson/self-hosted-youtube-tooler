@@ -7,11 +7,11 @@ import { NextResponse, type NextRequest } from "next/server";
 //
 // POST /api/revalidate
 //   header: Authorization: Bearer <REVALIDATE_TOKEN>
-//   body:   { "tag": "current-employees" }
+//   body:   { "tag": "example-tag" }
 //
 // Returns 401 on missing/wrong token (timing-safe compare), 400 if no tag,
 // 200 with { ok: true, tag } on success. Currently single-tag for
-// simplicity — extend to a {tags: string[]} array when a second consumer
+// simplicity. Extend to a {tags: string[]} array when a second consumer
 // shows up.
 
 export const dynamic = "force-dynamic";

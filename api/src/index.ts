@@ -6,6 +6,7 @@ import { metricsPlugin } from './plugins/metrics.js';
 import { postgresPlugin } from './plugins/postgres.js';
 import { valkeyPlugin } from './plugins/valkey.js';
 import { minioPlugin } from './plugins/minio.js';
+import { r2Plugin } from './plugins/r2.js';
 import { mailerPlugin } from './plugins/mailer.js';
 import { sessionPlugin } from './plugins/session.js';
 import { authGuardPlugin } from './plugins/auth-guard.js';
@@ -34,6 +35,7 @@ import { reviewRoutes } from './routes/reviews.js';
 import { adsRoutes } from './routes/ads.js';
 import { adminSyncRoutes } from './routes/admin-sync.js';
 import { youtubeRoutes } from './routes/youtube.js';
+import { billingRoutes } from './routes/billing.js';
 import { runMigrations } from './migrate.js';
 
 export function buildApp() {
@@ -121,6 +123,7 @@ export function buildApp() {
   app.register(postgresPlugin);
   app.register(valkeyPlugin);
   app.register(minioPlugin);
+  app.register(r2Plugin);
   app.register(mailerPlugin);
   app.register(sessionPlugin);
   app.register(stripePlugin);
@@ -149,6 +152,7 @@ export function buildApp() {
   app.register(adsRoutes);
   app.register(adminSyncRoutes);
   app.register(youtubeRoutes);
+  app.register(billingRoutes);
 
   // AML-3 / PAY-4: refuse to start if compliance-critical tables are missing.
   // These tables back velocity_flag / sanctions_block / discount-rollback paths;

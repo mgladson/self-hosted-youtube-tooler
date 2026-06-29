@@ -6,6 +6,7 @@ import { writeAuditLog } from '../lib/audit.js';
 import { meetsMinTier } from '../plugins/auth-guard.js';
 import { getClientIp } from '../lib/client-ip.js';
 import { removeSubscriber } from './newsletter.js';
+import { handleStripeSubscriptionEvent } from '../lib/subscriptions.js';
 
 type CartItem = {
   productId: string;
@@ -898,6 +899,10 @@ export async function checkoutRoutes(fastify: FastifyInstance) {
           }
         }
       }
+
+      // Supporter (Pro) subscription lifecycle — same ordering guarantee: its mutations
+      // + audit writes must commit here before the dedup key is claimed below.
+      await handleStripeSubscriptionEvent(instance, event);
 
       // SECURITY M-1 / Fintech M-1: claim the dedup key only after all mutations + audit
       // writes for this event have committed. If any branch above threw, this line never

@@ -137,7 +137,7 @@ Unlike hosted alternatives such as Gumroad, Lemon Squeezy, or Shopify itself, th
 
 ### 4.3 Deploy the Platform -- Developer/Operator Journey
 
-1. Clone the repository: `git clone <repo-url> && cd shopify-stack-clone`.
+1. Clone the repository: `git clone <repo-url> && cd youtube-tooler`.
 2. Copy the environment template: `cp .env.example .env`.
 3. Fill in required credentials in `.env`: `POSTGRES_PASSWORD`, `MINIO_ROOT_PASSWORD`, `SESSION_SECRET` (minimum 64 characters), `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `STRIPE_SECRET_KEY`, `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY`.
 4. Start all services: `docker compose up --build`.

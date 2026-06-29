@@ -45,6 +45,12 @@ const sessionSecret = process.env.SESSION_SECRET || (() => {
   return secret;
 })();
 
+const r2Enabled =
+  !!process.env.R2_ACCOUNT_ID &&
+  !!process.env.R2_ACCESS_KEY_ID &&
+  !!process.env.R2_SECRET_ACCESS_KEY &&
+  !!process.env.R2_BUCKET;
+
 export const config = {
   api: {
     host: process.env.API_HOST || '0.0.0.0',
@@ -109,6 +115,20 @@ export const config = {
     secretKey: process.env.STRIPE_SECRET_KEY || '',
     webhookSecret: process.env.STRIPE_WEBHOOK_SECRET || '',
     taxEnabled: process.env.STRIPE_TAX_ENABLED === 'true',
+    priceProMonthly: process.env.STRIPE_PRICE_PRO_MONTHLY || '',
+    priceProAnnual: process.env.STRIPE_PRICE_PRO_ANNUAL || '',
+  },
+  // Cloudflare R2 (S3-compatible) cache for merged YouTube downloads. Optional:
+  // when unset the API streams downloads directly (no cache). R2's zero egress
+  // fees are the point — repeat downloads of the same video serve from R2 free.
+  r2: {
+    enabled: r2Enabled,
+    endPoint: process.env.R2_ACCOUNT_ID
+      ? `${process.env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com`
+      : '',
+    accessKey: process.env.R2_ACCESS_KEY_ID || '',
+    secretKey: process.env.R2_SECRET_ACCESS_KEY || '',
+    bucket: process.env.R2_BUCKET || '',
   },
   baseUrl: process.env.BASE_URL || 'http://localhost',
   nodeEnv,

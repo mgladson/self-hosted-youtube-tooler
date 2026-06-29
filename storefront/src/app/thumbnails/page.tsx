@@ -3,9 +3,9 @@ import { ThumbnailStudioContent } from "@/components/ThumbnailStudioContent";
 import { buildMetadata } from "@/lib/seo";
 
 export const metadata: Metadata = buildMetadata({
-  title: "Thumbnail Grabber",
+  title: "YouTube Thumbnail Downloader",
   description:
-    "Download every thumbnail resolution from any YouTube video — max-res, HQ, SD, and frame grabs.",
+    "Download every thumbnail from any public YouTube video: max-res up to 1280x720, plus HQ, SD, and auto-extracted frame grabs. Copy the URL or save the file.",
   path: "/thumbnails",
 });
 

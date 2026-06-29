@@ -1,9 +1,9 @@
 {
-  "name": "@shopify-stack/storefront",
+  "name": "@youtube-tooler/storefront",
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev --port 3000",
+    "dev": "next dev --turbopack --port 3000",
     "build": "next build",
     "start": "next start"
   },

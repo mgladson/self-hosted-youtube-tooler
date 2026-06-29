@@ -3,14 +3,24 @@ import { createReadStream } from 'node:fs';
 import { rm, stat } from 'node:fs/promises';
 import { getClientIp } from '../lib/client-ip.js';
 import {
+  canonicalUrl,
   downloadMedia,
+  type DownloadResult,
   extractVideoId,
   extractYouTube,
   getAvailableFormats,
+  getTranscript,
   YouTubeError,
   type YouTubeErrorCode,
   type YouTubeExtractResult,
 } from '../lib/youtube.js';
+import {
+  resolveEntitlement,
+  chargeLookupQuota,
+  chargeDownloadQuota,
+  isQualityAllowed,
+} from '../lib/entitlement.js';
+import { config } from '../config.js';
 
 const EXTRACT_TIMEOUT_MS = 120_000;
 
@@ -93,6 +103,23 @@ export async function youtubeRoutes(fastify: FastifyInstance) {
         fastify.log.warn({ err }, 'youtube rate-limit check failed');
       }
 
+      // Per-tier daily quota — pooled lookups, charged once per video per day, only on
+      // the cache-miss path (this is the request that hits YouTube).
+      const ent = await resolveEntitlement(fastify, request);
+      const quota = await chargeLookupQuota(fastify, ent, videoId);
+      if (!quota.allowed) {
+        fastify.metrics.quotaExceededTotal.inc({ tier: ent.tier, feature: 'lookup' });
+        reply.header('Retry-After', String(quota.retryAfter));
+        return reply.status(429).send({
+          error: "You've reached today's free limit — upgrade to the Paid plan for more.",
+          code: 'quota_exceeded',
+          used: quota.used,
+          limit: quota.limit,
+          resetAt: quota.resetAt,
+          upgrade: true,
+        });
+      }
+
       // 3) Fetch (yt-dlp Android-client method; routed through YT_DLP_PROXY if set), then cache.
       try {
         const result = await extractYouTube(input, { timeoutMs: EXTRACT_TIMEOUT_MS });
@@ -109,6 +136,81 @@ export async function youtubeRoutes(fastify: FastifyInstance) {
           { err: err instanceof Error ? err.message : err, videoId },
           'youtube extract failed',
         );
+        return sendError(reply, err);
+      }
+    },
+  );
+
+  // Transcript-only — lighter than /extract (skips the metadata fetch). Returns
+  // the same Transcript shape (+ videoId), valkey-cached, and shares the per-IP
+  // YouTube rate limit since a cache miss hits YouTube for the subtitles.
+  const TRANSCRIPT_CACHE_PREFIX = 'youtube:transcript:';
+
+  fastify.get<{ Querystring: { url?: string } }>(
+    '/api/youtube/transcript',
+    async (request, reply) => {
+      const input = (request.query.url || '').trim();
+      if (!input) {
+        return reply.status(400).send({ error: 'The "url" query parameter is required.' });
+      }
+      const videoId = extractVideoId(input);
+      if (!videoId) {
+        return reply.status(400).send({ error: 'Not a valid YouTube URL or video id.' });
+      }
+      const cacheKey = TRANSCRIPT_CACHE_PREFIX + videoId;
+      try {
+        const cached = await fastify.valkey.get(cacheKey);
+        if (cached) {
+          reply.header('X-Cache', 'HIT');
+          reply.header('Cache-Control', 'public, max-age=3600');
+          return reply.send(JSON.parse(cached));
+        }
+      } catch (err) {
+        fastify.log.warn({ err }, 'youtube transcript cache read failed');
+      }
+
+      try {
+        const rlKey = RATE_PREFIX + getClientIp(request);
+        const count = await fastify.valkey.incr(rlKey);
+        if (count === 1) await fastify.valkey.expire(rlKey, RATE_WINDOW_S);
+        if (count > RATE_LIMIT) {
+          reply.header('Retry-After', String(RATE_WINDOW_S));
+          return reply.status(429).send({
+            error: 'Too many new lookups from your network. Wait a minute and try again.',
+            code: 'rate_limited',
+          });
+        }
+      } catch (err) {
+        fastify.log.warn({ err }, 'youtube transcript rate-limit check failed');
+      }
+
+      const ent = await resolveEntitlement(fastify, request);
+      const quota = await chargeLookupQuota(fastify, ent, videoId);
+      if (!quota.allowed) {
+        fastify.metrics.quotaExceededTotal.inc({ tier: ent.tier, feature: 'lookup' });
+        reply.header('Retry-After', String(quota.retryAfter));
+        return reply.status(429).send({
+          error: "You've reached today's free limit — upgrade to the Paid plan for more.",
+          code: 'quota_exceeded',
+          used: quota.used,
+          limit: quota.limit,
+          resetAt: quota.resetAt,
+          upgrade: true,
+        });
+      }
+
+      try {
+        const transcript = await getTranscript(canonicalUrl(videoId));
+        const result = { videoId, ...transcript };
+        try {
+          await fastify.valkey.set(cacheKey, JSON.stringify(result), 'EX', CACHE_TTL_S);
+        } catch (err) {
+          fastify.log.warn({ err }, 'youtube transcript cache write failed');
+        }
+        reply.header('X-Cache', 'MISS');
+        reply.header('Cache-Control', 'public, max-age=3600');
+        return reply.send(result);
+      } catch (err) {
         return sendError(reply, err);
       }
     },
@@ -179,6 +281,22 @@ export async function youtubeRoutes(fastify: FastifyInstance) {
       } catch (err) {
         fastify.log.warn({ err }, 'youtube formats cache read failed');
       }
+
+      const ent = await resolveEntitlement(fastify, request);
+      const quota = await chargeLookupQuota(fastify, ent, videoId);
+      if (!quota.allowed) {
+        fastify.metrics.quotaExceededTotal.inc({ tier: ent.tier, feature: 'lookup' });
+        reply.header('Retry-After', String(quota.retryAfter));
+        return reply.status(429).send({
+          error: "You've reached today's free limit — upgrade to the Paid plan for more.",
+          code: 'quota_exceeded',
+          used: quota.used,
+          limit: quota.limit,
+          resetAt: quota.resetAt,
+          upgrade: true,
+        });
+      }
+
       try {
         const result = await getAvailableFormats(input);
         try {
@@ -201,6 +319,11 @@ export async function youtubeRoutes(fastify: FastifyInstance) {
   const DL_RATE_LIMIT = 10;
   const DL_RATE_WINDOW_S = 600;
   const DL_QUALITIES = new Set(['audio', '360', '480', '720', '1080', '1440', '2160']);
+  // R2 download cache: serve a stored merged file when it's still fresh, else
+  // re-fetch. 24h freshness is enforced on read here; a 1-day R2 lifecycle rule
+  // reclaims the storage. Presigned URLs are short-lived (mirrors download.ts).
+  const R2_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+  const R2_PRESIGN_TTL_S = 5 * 60;
 
   fastify.get<{ Querystring: { url?: string; quality?: string } }>(
     '/api/youtube/download',
@@ -213,8 +336,20 @@ export async function youtubeRoutes(fastify: FastifyInstance) {
       if (!DL_QUALITIES.has(quality)) {
         return reply.status(400).send({ error: 'Invalid or missing "quality".' });
       }
-      if (!extractVideoId(input)) {
+      const videoId = extractVideoId(input);
+      if (!videoId) {
         return reply.status(400).send({ error: 'Not a valid YouTube URL or video id.' });
+      }
+
+      // Downloads are the expensive path: basic quality (audio + up to 720p) is free
+      // to everyone with a daily allowance; HD/4K is reserved for Supporters.
+      const ent = await resolveEntitlement(fastify, request);
+      if (!isQualityAllowed(ent.isPro, quality)) {
+        return reply.status(402).send({
+          error: 'HD and 4K downloads need the Paid plan. Upgrade to download this quality.',
+          code: 'upgrade_required',
+          upgrade: true,
+        });
       }
 
       try {
@@ -232,7 +367,100 @@ export async function youtubeRoutes(fastify: FastifyInstance) {
         fastify.log.warn({ err }, 'youtube download rate-limit check failed');
       }
 
-      let media;
+      // Per-tier daily download allowance (downloads always count — never cached).
+      const dlQuota = await chargeDownloadQuota(fastify, ent);
+      if (!dlQuota.allowed) {
+        fastify.metrics.quotaExceededTotal.inc({ tier: ent.tier, feature: 'download' });
+        reply.header('Retry-After', String(dlQuota.retryAfter));
+        return reply.status(429).send({
+          error: "You've reached today's free download limit — upgrade to the Paid plan for more.",
+          code: 'quota_exceeded',
+          used: dlQuota.used,
+          limit: dlQuota.limit,
+          resetAt: dlQuota.resetAt,
+          upgrade: true,
+        });
+      }
+
+      // Stream a freshly-downloaded temp file straight to the client. This is the
+      // pre-R2 behavior and the fallback when R2 is unavailable; it owns cleanup.
+      const streamTemp = async (media: DownloadResult) => {
+        const { dir, filePath, filename, contentType } = media;
+        const cleanup = () => {
+          rm(dir, { recursive: true, force: true }).catch(() => {});
+        };
+        let size = 0;
+        try {
+          size = (await stat(filePath)).size;
+        } catch {
+          // non-fatal — stream without a Content-Length
+        }
+        const stream = createReadStream(filePath);
+        stream.on('error', cleanup);
+        stream.on('close', cleanup);
+
+        reply.header('Content-Type', contentType);
+        reply.header('Content-Disposition', `attachment; filename="${filename}"`);
+        if (size > 0) reply.header('Content-Length', String(size));
+        reply.header('Cache-Control', 'no-store');
+        return reply.send(stream);
+      };
+
+      // With R2 configured, cache merged downloads there and hand the client a
+      // short-lived presigned URL (302). Repeat downloads of the same video then
+      // skip yt-dlp/ffmpeg and serve from R2's free egress. Any R2 error falls
+      // back to direct streaming, so a download never hard-fails because of it.
+      const r2 = fastify.r2;
+      if (r2) {
+        const ext = quality === 'audio' ? 'mp3' : 'mp4';
+        const r2ContentType = quality === 'audio' ? 'audio/mpeg' : 'video/mp4';
+        const bucket = config.r2.bucket;
+        const key = `yt/${videoId}/${quality}.${ext}`;
+
+        // Cache hit: a stored copy still inside the 24h freshness window.
+        try {
+          const st = await r2.statObject(bucket, key);
+          if (Date.now() - st.lastModified.getTime() <= R2_CACHE_TTL_MS) {
+            const name = (st.metaData as Record<string, string>)['filename'] || `${videoId}.${ext}`;
+            const url = await r2.presignedGetObject(bucket, key, R2_PRESIGN_TTL_S, {
+              'response-content-disposition': `attachment; filename="${name}"`,
+            });
+            return reply.redirect(url, 302);
+          }
+        } catch {
+          // object missing or a transient stat error → fetch it below
+        }
+
+        let media: DownloadResult;
+        try {
+          media = await downloadMedia(input, quality);
+        } catch (err) {
+          fastify.log.warn(
+            { err: err instanceof Error ? err.message : err, quality },
+            'youtube download failed',
+          );
+          return sendError(reply, err);
+        }
+
+        try {
+          await r2.fPutObject(bucket, key, media.filePath, {
+            'Content-Type': r2ContentType,
+            filename: media.filename,
+          });
+          const url = await r2.presignedGetObject(bucket, key, R2_PRESIGN_TTL_S, {
+            'response-content-disposition': `attachment; filename="${media.filename}"`,
+          });
+          rm(media.dir, { recursive: true, force: true }).catch(() => {});
+          return reply.redirect(url, 302);
+        } catch (err) {
+          // R2 store/presign failed — serve the file we already have on local disk.
+          fastify.log.warn({ err }, 'R2 store failed; streaming download directly');
+          return streamTemp(media);
+        }
+      }
+
+      // No R2 configured: download and stream straight back.
+      let media: DownloadResult;
       try {
         media = await downloadMedia(input, quality);
       } catch (err) {
@@ -242,26 +470,7 @@ export async function youtubeRoutes(fastify: FastifyInstance) {
         );
         return sendError(reply, err);
       }
-
-      const { dir, filePath, filename, contentType } = media;
-      const cleanup = () => {
-        rm(dir, { recursive: true, force: true }).catch(() => {});
-      };
-      let size = 0;
-      try {
-        size = (await stat(filePath)).size;
-      } catch {
-        // non-fatal — stream without a Content-Length
-      }
-      const stream = createReadStream(filePath);
-      stream.on('error', cleanup);
-      stream.on('close', cleanup);
-
-      reply.header('Content-Type', contentType);
-      reply.header('Content-Disposition', `attachment; filename="${filename}"`);
-      if (size > 0) reply.header('Content-Length', String(size));
-      reply.header('Cache-Control', 'no-store');
-      return reply.send(stream);
+      return streamTemp(media);
     },
   );
 }

@@ -18,9 +18,12 @@
   --plum:        #4b5563;
   --rule:        #e4e6eb;
   --rule-strong: #ced0d4;
+
+  /* Site-wide UI font: Segoe UI, with a system fallback chain for non-Windows. */
+  --font-ui: 'Segoe UI', system-ui, -apple-system, BlinkMacSystemFont, Roboto, 'Helvetica Neue', Arial, sans-serif;
 }
 
-/* Dark theme — activated by the `dark` class on <html> (toggled by ThemeToggle,
+/* Dark theme, activated by the `dark` class on <html> (toggled by ThemeToggle,
    applied pre-paint by the no-flash init script in layout.tsx). Mirrors the
    light token set with a Facebook-dark-mode-inspired palette. */
 html.dark {
@@ -45,13 +48,13 @@ html.dark {
   html {
     background-color: var(--paper);
     color: var(--ink);
-    font-family: var(--font-sans), 'Inter', var(--font-noto-myanmar), 'Noto Sans Myanmar', system-ui, -apple-system, 'Segoe UI', sans-serif;
+    font-family: var(--font-ui);
     font-feature-settings: "kern", "liga", "calt";
     font-optical-sizing: auto;
-    /* Smooth anchor-link scroll + offset so sections land below any sticky
-       nav (recipe page's StickyJumpNav is ~58px tall). prefers-reduced-motion
-       still wins because the spec specifies "auto" overrides reduced-motion
-       only when the user has explicitly opted into smooth elsewhere. */
+    /* Smooth anchor-link scroll + offset so in-page anchors land below the
+       sticky header. prefers-reduced-motion still wins because the spec
+       specifies "auto" overrides reduced-motion only when the user has
+       explicitly opted into smooth elsewhere. */
     scroll-behavior: smooth;
     scroll-padding-top: 88px;
   }
@@ -60,7 +63,7 @@ html.dark {
     color: var(--ink);
   }
   h1, h2, h3, h4, h5, h6 {
-    font-family: var(--font-display), 'Plus Jakarta Sans', var(--font-noto-myanmar), 'Noto Sans Myanmar', system-ui, -apple-system, 'Segoe UI', sans-serif;
+    font-family: var(--font-ui);
     font-feature-settings: "kern", "liga", "ss01";
     font-optical-sizing: auto;
   }
@@ -71,9 +74,9 @@ html.dark {
 }
 
 @layer utilities {
-  .font-display { font-family: var(--font-display), 'Plus Jakarta Sans', var(--font-noto-myanmar), 'Noto Sans Myanmar', system-ui, -apple-system, 'Segoe UI', sans-serif; }
-  .font-body    { font-family: var(--font-sans), 'Inter', var(--font-noto-myanmar), 'Noto Sans Myanmar', system-ui, -apple-system, 'Segoe UI', sans-serif; }
-  .font-mono    { font-family: var(--font-jetbrains-mono), 'JetBrains Mono', ui-monospace, monospace; }
+  .font-display { font-family: var(--font-ui); }
+  .font-body    { font-family: var(--font-ui); }
+  .font-mono    { font-family: var(--font-ui); }
 
   .text-ink         { color: var(--ink); }
   .text-ink-soft    { color: var(--ink-soft); }
@@ -107,46 +110,12 @@ html.dark {
   .border-plum        { border-color: var(--plum); }
 
   .label-eyebrow {
-    font-family: var(--font-jetbrains-mono), 'JetBrains Mono', ui-monospace, monospace;
+    font-family: var(--font-ui);
     font-size: 11px;
     letter-spacing: 0.18em;
     text-transform: uppercase;
     font-weight: 500;
     color: var(--ink-soft);
-  }
-
-  /* Burmese typography adjustments. Myanmar glyphs need taller line-height and
-     no uppercase/wide tracking (which is meaningless for Burmese script). */
-  :root[lang="my"] .label-eyebrow,
-  :root[lang="my"] .font-mono {
-    font-family: var(--font-noto-myanmar), 'Noto Sans Myanmar',
-      var(--font-jetbrains-mono), 'JetBrains Mono', ui-monospace, monospace;
-    text-transform: none;
-    letter-spacing: 0.04em;
-  }
-  :root[lang="my"] h1,
-  :root[lang="my"] h2,
-  :root[lang="my"] h3,
-  :root[lang="my"] h4,
-  :root[lang="my"] h5,
-  :root[lang="my"] h6 {
-    line-height: 1.35;
-    letter-spacing: 0;
-  }
-  :root[lang="my"] .bea-leading-tight {
-    line-height: 1.35 !important;
-  }
-  /* Brand mark wrapper uses `leading-none` which clips Burmese vowel marks.
-     Tag the brand spans with `.bea-brand-mark` so we can relax the leading
-     only when the locale is Burmese. */
-  :root[lang="my"] .bea-brand-mark {
-    line-height: 1.4 !important;
-  }
-  /* Tight display H1s use leading-[0.95]/0.92 which clip Burmese diacritics.
-     Use a hook class on the H1 element so we can relax it for MY. */
-  :root[lang="my"] .bea-display-h1 {
-    line-height: 1.2 !important;
-    letter-spacing: 0 !important;
   }
 
   .editorial-rule {

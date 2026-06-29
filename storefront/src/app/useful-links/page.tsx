@@ -5,7 +5,7 @@ import { buildMetadata } from "@/lib/seo";
 export const metadata: Metadata = buildMetadata({
   title: "Useful Links",
   description:
-    "A short list of outside tools that pair well with the extractor — for compressing thumbnails and pulling background music.",
+    "A short list of outside tools that pair well with the extractor, for compressing thumbnails and pulling background music.",
   path: "/useful-links",
 });
 

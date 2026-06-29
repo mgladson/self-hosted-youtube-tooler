@@ -1,5 +1,5 @@
 {
-  "name": "@shopify-stack/shared",
+  "name": "@youtube-tooler/shared",
   "version": "0.1.0",
   "private": true,
   "main": "src/index.ts",

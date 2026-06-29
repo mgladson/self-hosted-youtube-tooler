@@ -18,6 +18,7 @@ declare module 'fastify' {
       rateLimitHitsTotal: Counter;
       ipBansTotal: Counter;
       httpRequestsByUaClassTotal: Counter;
+      quotaExceededTotal: Counter;
     };
   }
 }
@@ -153,6 +154,13 @@ async function metrics(fastify: FastifyInstance) {
     registers: [registry],
   });
 
+  const quotaExceededTotal = new Counter({
+    name: 'youtube_quota_exceeded_total',
+    help: 'YouTube tool requests rejected for exceeding a per-tier daily quota',
+    labelNames: ['tier', 'feature'] as const,
+    registers: [registry],
+  });
+
   // Business metrics
   const storeRevenue = new Gauge({
     name: 'store_revenue_cents',
@@ -240,6 +248,7 @@ async function metrics(fastify: FastifyInstance) {
     rateLimitHitsTotal,
     ipBansTotal,
     httpRequestsByUaClassTotal,
+    quotaExceededTotal,
   });
 
   const metricsPort = Number(process.env.METRICS_PORT ?? 9091);

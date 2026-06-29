@@ -182,6 +182,10 @@ services:
       dockerfile: storefront/Dockerfile
       target: development
     restart: unless-stopped
+    # Override the image CMD (npm run dev -> next dev --turbopack). Turbopack's
+    # watcher ignores WATCHPACK_POLLING; the webpack dev server honors it and so
+    # actually sees edits coming through the Windows bind mount.
+    command: ["npx", "next", "dev", "--port", "3000"]
     # No host port publish — storefront is only reachable via Caddy at
     # ${CADDY_PORT}, matching prod where Caddy is the single entry point.
     # Re-add a `ports:` block here only if you specifically need to hit the
@@ -198,6 +202,9 @@ services:
       NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL}
       API_INTERNAL_URL: ${API_INTERNAL_URL}
       NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: ${NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY}
+      # Windows/Docker bind mounts don't deliver filesystem events into the
+      # container, so next dev's watcher never fires. Poll the FS instead.
+      WATCHPACK_POLLING: "true"
     networks:
       - app-network
 

@@ -66,6 +66,31 @@ describe('parseVtt', () => {
   it('returns an empty array for header-only content', () => {
     expect(parseVtt('WEBVTT\n\n')).toEqual([]);
   });
+  it('keeps the opening cue whose payload starts with a blank placeholder line', () => {
+    // YouTube's first auto-caption cue prefixes its text with a single-space
+    // line. The opening cue must survive at its real start (0.24) — previously
+    // the space line was treated as the cue terminator, dropping it so the
+    // transcript began at the second cue (0:02 instead of 0:00).
+    const vtt = [
+      'WEBVTT',
+      '',
+      '00:00:00.240 --> 00:00:02.230',
+      ' ',
+      '90<00:00:00.560><c> days</c>',
+      '',
+      '00:00:02.230 --> 00:00:02.240',
+      '90 days',
+      '',
+      '00:00:02.240 --> 00:00:04.710',
+      '90 days',
+      'the<00:00:02.480><c> US</c>',
+      '',
+    ].join('\n');
+    const entries = parseVtt(vtt);
+    expect(entries[0].text).toBe('90 days');
+    expect(entries[0].start).toBeCloseTo(0.24);
+    expect(entries[entries.length - 1].text).toBe('90 days the US');
+  });
 });
 
 describe('groupTranscript', () => {

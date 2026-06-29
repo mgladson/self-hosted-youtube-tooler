@@ -44,7 +44,8 @@ function getSessionId(): string {
 
 function describeElement(el: HTMLElement): { tag: string; text: string; href: string; element_id: string } {
   const tag = el.tagName.toLowerCase();
-  const text = (el.innerText || el.textContent || "").trim().slice(0, 80);
+  // textContent (not innerText) avoids forcing a synchronous layout on every click.
+  const text = (el.textContent || "").trim().slice(0, 80);
   const href = (el as HTMLAnchorElement).href ?? "";
   const element_id = el.id || el.getAttribute("data-track-id") || "";
   return { tag, text, href, element_id };

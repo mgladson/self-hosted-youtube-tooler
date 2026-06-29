@@ -9,10 +9,11 @@ export default function robots(): MetadataRoute.Robots {
       {
         userAgent: "*",
         allow: "/",
+        // /_next/ is intentionally NOT blocked: it serves the CSS and JS
+        // Googlebot needs to render the page.
         disallow: [
           "/api/",
           "/admin/",
-          "/_next/",
           "/private/",
           "/preview/",
           "/*?preview=*",

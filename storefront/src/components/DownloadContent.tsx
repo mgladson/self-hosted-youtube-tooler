@@ -1,7 +1,15 @@
 "use client";
 
 import { useCallback, useState, type FormEvent } from "react";
+import Link from "next/link";
 import { PageShell } from "./PageShell";
+import { DownloadButton } from "./DownloadButton";
+import {
+  ToolErrorNotice,
+  toToolError,
+  type ToolError,
+  type ToolErrorBody,
+} from "./ToolErrorNotice";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "";
 
@@ -27,7 +35,7 @@ const DOWNLOADABLE = [2160, 1440, 1080, 720, 480, 360];
 export function DownloadContent() {
   const [url, setUrl] = useState("");
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<ToolError | null>(null);
   const [info, setInfo] = useState<FormatsResult | null>(null);
 
   const onSubmit = useCallback(
@@ -42,15 +50,15 @@ export function DownloadContent() {
         const res = await fetch(
           `${API_BASE}/youtube/formats?url=${encodeURIComponent(value)}`,
         );
-        const body = (await res.json().catch(() => ({}))) as Partial<FormatsResult> & {
-          error?: string;
-        };
+        const body = (await res.json().catch(() => ({}))) as Partial<FormatsResult> &
+          ToolErrorBody;
         if (!res.ok) {
-          throw new Error(body.error || `Request failed (${res.status})`);
+          setError(toToolError(body, res.status));
+          return;
         }
         setInfo(body as FormatsResult);
       } catch (err) {
-        setError(err instanceof Error ? err.message : String(err));
+        setError({ message: err instanceof Error ? err.message : String(err) });
       } finally {
         setLoading(false);
       }
@@ -68,33 +76,32 @@ export function DownloadContent() {
 
   return (
     <PageShell
-      title="Download"
-      intro="Paste a YouTube link to download the video at any available resolution, or just the audio."
+      title="YouTube Video Downloader"
+      intro="A YouTube video downloader saves any public video as a file on your device. Paste a link to download the full video at up to 4K, or pull just the audio as an MP3. No software to install and no account needed."
       wide
+      toolTabs
+      compact={!!info}
+      input={
+        <form onSubmit={onSubmit} className="flex flex-col gap-3 sm:flex-row">
+          <input
+            type="text"
+            value={url}
+            onChange={(e) => setUrl(e.target.value)}
+            placeholder="https://www.youtube.com/watch?v=…"
+            className="flex-1 border border-ink/70 bg-paper px-4 py-3 font-body text-[16px] text-ink outline-none focus:border-ochre"
+            aria-label="YouTube URL"
+          />
+          <button
+            type="submit"
+            disabled={loading || !url.trim()}
+            className="whitespace-nowrap border border-ochre bg-ochre px-6 py-3 font-mono text-[12px] uppercase tracking-[0.18em] text-paper transition-colors hover:bg-ochre-deep disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {loading ? "Loading…" : "Load"}
+          </button>
+        </form>
+      }
     >
-      <form onSubmit={onSubmit} className="flex flex-col gap-3 sm:flex-row">
-        <input
-          type="text"
-          value={url}
-          onChange={(e) => setUrl(e.target.value)}
-          placeholder="https://www.youtube.com/watch?v=…"
-          className="flex-1 border border-ink/70 bg-paper px-4 py-3 font-body text-[16px] text-ink outline-none focus:border-ochre"
-          aria-label="YouTube URL"
-        />
-        <button
-          type="submit"
-          disabled={loading || !url.trim()}
-          className="whitespace-nowrap border border-ochre bg-ochre px-6 py-3 font-mono text-[12px] uppercase tracking-[0.18em] text-paper transition-colors hover:bg-ochre-deep disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          {loading ? "Loading…" : "Load"}
-        </button>
-      </form>
-
-      {error && (
-        <div className="mt-8 border border-crimson/60 bg-paper-warm p-5 font-body text-[15px] text-crimson">
-          {error}
-        </div>
-      )}
+      {error && <ToolErrorNotice error={error} />}
 
       {info && (
         <div className="mt-12">
@@ -106,14 +113,12 @@ export function DownloadContent() {
           {videoQualities.length > 0 ? (
             <div className="mt-3 flex flex-wrap gap-3">
               {videoQualities.map((h) => (
-                <a
+                <DownloadButton
                   key={h}
                   href={dlHref(String(h))}
-                  download
-                  className="border border-ochre bg-ochre px-5 py-3 font-mono text-[12px] uppercase tracking-[0.16em] text-paper transition-colors hover:bg-ochre-deep"
-                >
-                  {HEIGHT_LABELS[h] ?? `${h}p`}
-                </a>
+                  label={HEIGHT_LABELS[h] ?? `${h}p`}
+                  quality={String(h)}
+                />
               ))}
             </div>
           ) : (
@@ -126,24 +131,80 @@ export function DownloadContent() {
             <>
               <h3 className="label-eyebrow mt-10 text-ink">Audio</h3>
               <div className="mt-3">
-                <a
+                <DownloadButton
                   href={dlHref("audio")}
-                  download
-                  className="inline-block border border-rule px-5 py-3 font-mono text-[12px] uppercase tracking-[0.16em] text-ink-soft transition-colors hover:border-ochre hover:text-ochre"
-                >
-                  Audio (MP3)
-                </a>
+                  label="Audio (MP3)"
+                  quality="audio"
+                  variant="secondary"
+                />
               </div>
             </>
           )}
 
           <p className="mt-10 max-w-[640px] font-body text-[14px] italic leading-[1.6] text-ink-muted">
             Files are prepared on the server before the download begins, so it may
-            sit &ldquo;pending&rdquo; for a moment — 1080p and up (especially 4K)
+            sit &ldquo;pending&rdquo; for a moment. 1080p and up (especially 4K)
             can take a minute or two before the file starts saving.
           </p>
         </div>
       )}
+
+      <section
+        className={`mt-20 border-t-2 border-rule-strong pt-12 ${info ? "hidden" : ""}`}
+      >
+        <h2 className="font-display text-[26px] font-bold leading-tight tracking-[-0.01em] text-ink md:text-[32px]">
+          Why download a YouTube video
+        </h2>
+        <p className="mt-4 max-w-[720px] font-body text-[16px] leading-[1.75] text-ink-soft md:text-[17px]">
+          {"A local copy plays without buffering or ads, works offline on a flight or commute, and gives you a master file for editing, archiving, or reuse where you hold the rights. Pulling only the audio turns a talk, lecture, or song into an MP3 you can play anywhere."}
+        </p>
+
+        <h2 className="mt-12 font-display text-[26px] font-bold leading-tight tracking-[-0.01em] text-ink md:text-[32px]">
+          What you get
+        </h2>
+        <ul className="mt-4 max-w-[720px] list-disc space-y-2 pl-5 font-body text-[16px] leading-[1.75] text-ink-soft md:text-[17px]">
+          <li>{"Video downloads at every resolution the source offers, up to 4K."}</li>
+          <li>{"Audio-only export as an MP3 for podcasts, music, and talks."}</li>
+          <li>{"The original video title, so you can confirm the right file before saving."}</li>
+          <li>{"Everyday resolutions and audio for free; HD and 4K on the paid plan."}</li>
+        </ul>
+
+        <h2 className="mt-12 font-display text-[26px] font-bold leading-tight tracking-[-0.01em] text-ink md:text-[32px]">
+          How it works
+        </h2>
+        <ol className="mt-4 max-w-[720px] list-decimal space-y-2 pl-5 font-body text-[16px] leading-[1.75] text-ink-soft md:text-[17px]">
+          <li>{"Copy the link to any public YouTube video."}</li>
+          <li>{"Paste it above and select Load to see the available qualities."}</li>
+          <li>{"Choose a resolution or Audio (MP3), and the file saves to your device."}</li>
+        </ol>
+
+        <h2 className="mt-12 font-display text-[26px] font-bold leading-tight tracking-[-0.01em] text-ink md:text-[32px]">
+          Related tools
+        </h2>
+        <p className="mt-4 max-w-[720px] font-body text-[16px] leading-[1.75] text-ink-soft md:text-[17px]">
+          {"Same video, more tools: get the "}
+          <Link href="/transcript" className="text-ochre-deep underline hover:text-ochre">
+            transcript
+          </Link>
+          {", grab a "}
+          <Link href="/thumbnails" className="text-ochre-deep underline hover:text-ochre">
+            thumbnail
+          </Link>
+          {", or pull its "}
+          <Link href="/tags" className="text-ochre-deep underline hover:text-ochre">
+            tags and keywords
+          </Link>
+          {". See "}
+          <Link href="/pricing" className="text-ochre-deep underline hover:text-ochre">
+            pricing
+          </Link>
+          {" for HD and 4K limits, or the "}
+          <Link href="/faq" className="text-ochre-deep underline hover:text-ochre">
+            FAQ
+          </Link>
+          {"."}
+        </p>
+      </section>
     </PageShell>
   );
 }

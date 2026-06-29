@@ -1,10 +1,8 @@
-"use client";
-
-import { useTranslation } from "@/lib/i18n";
+import { DEFAULT_LOCALE, messages } from "@/lib/i18n";
 import { PageShell } from "./PageShell";
 
 export function PrivacyPolicyContent() {
-  const { t } = useTranslation();
+  const t = messages[DEFAULT_LOCALE];
   return (
     <PageShell title={t.privacy.title} intro={t.privacy.intro}>
       <p className="font-body text-[14px] italic text-ink-muted">

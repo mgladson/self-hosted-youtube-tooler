@@ -15,9 +15,9 @@ module.exports = {
         'btn-info': '#65676b',
       },
       fontFamily: {
-        sans: ['var(--font-sans)', 'Inter', 'ui-sans-serif', 'system-ui', '-apple-system', 'Segoe UI', 'sans-serif'],
-        heading: ['var(--font-display)', 'Plus Jakarta Sans', 'ui-sans-serif', 'system-ui', 'sans-serif'],
-        mono: ['var(--font-jetbrains-mono)', 'ui-monospace', 'monospace'],
+        sans: ['var(--font-ui)', 'Segoe UI', 'system-ui', 'sans-serif'],
+        heading: ['var(--font-ui)', 'Segoe UI', 'system-ui', 'sans-serif'],
+        mono: ['var(--font-ui)', 'Segoe UI', 'system-ui', 'sans-serif'],
       },
     },
   },

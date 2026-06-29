@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useMemo, useState, type FormEvent } from "react";
+import Link from "next/link";
 import { PageShell } from "./PageShell";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "";
@@ -91,27 +92,31 @@ export function TagsSeoContent() {
 
   return (
     <PageShell
-      title="Tags & SEO"
-      intro="Paste a YouTube link to pull its tags and surface keyword ideas for your own titles, tags, and descriptions."
+      title="YouTube Tag Extractor and Keyword Tool"
+      intro="A YouTube tag extractor reveals the hidden keywords a creator attached to a video. Paste a link to see all of a video's tags, check them against YouTube's 500-character limit, and get keyword ideas for your own titles, tags, and descriptions."
       wide
+      toolTabs
+      compact={!!result}
+      input={
+        <form onSubmit={onSubmit} className="flex flex-col gap-3 sm:flex-row">
+          <input
+            type="text"
+            value={url}
+            onChange={(e) => setUrl(e.target.value)}
+            placeholder="https://www.youtube.com/watch?v=…"
+            className="flex-1 border border-ink/70 bg-paper px-4 py-3 font-body text-[16px] text-ink outline-none focus:border-ochre"
+            aria-label="YouTube URL"
+          />
+          <button
+            type="submit"
+            disabled={loading || !url.trim()}
+            className="whitespace-nowrap border border-ochre bg-ochre px-6 py-3 font-mono text-[12px] uppercase tracking-[0.18em] text-paper transition-colors hover:bg-ochre-deep disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {loading ? "Analyzing…" : "Analyze"}
+          </button>
+        </form>
+      }
     >
-      <form onSubmit={onSubmit} className="flex flex-col gap-3 sm:flex-row">
-        <input
-          type="text"
-          value={url}
-          onChange={(e) => setUrl(e.target.value)}
-          placeholder="https://www.youtube.com/watch?v=…"
-          className="flex-1 border border-ink/70 bg-paper px-4 py-3 font-body text-[16px] text-ink outline-none focus:border-ochre"
-          aria-label="YouTube URL"
-        />
-        <button
-          type="submit"
-          disabled={loading || !url.trim()}
-          className="whitespace-nowrap border border-ochre bg-ochre px-6 py-3 font-mono text-[12px] uppercase tracking-[0.18em] text-paper transition-colors hover:bg-ochre-deep disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          {loading ? "Analyzing…" : "Analyze"}
-        </button>
-      </form>
 
       {error && (
         <div className="mt-8 border border-crimson/60 bg-paper-warm p-5 font-body text-[15px] text-crimson">
@@ -185,6 +190,63 @@ export function TagsSeoContent() {
           )}
         </div>
       )}
+
+      <section
+        className={`mt-20 border-t-2 border-rule-strong pt-12 ${result ? "hidden" : ""}`}
+      >
+        <h2 className="font-display text-[26px] font-bold leading-tight tracking-[-0.01em] text-ink md:text-[32px]">
+          Why look up video tags
+        </h2>
+        <p className="mt-4 max-w-[720px] font-body text-[16px] leading-[1.75] text-ink-soft md:text-[17px]">
+          {"Tags are keywords a creator hides in a video's metadata to tell YouTube what the video is about. Seeing the tags on videos that already rank for your topic shows you the exact language your audience searches for, which you can fold into your own titles, descriptions, and tags."}
+        </p>
+
+        <h2 className="mt-12 font-display text-[26px] font-bold leading-tight tracking-[-0.01em] text-ink md:text-[32px]">
+          What you get
+        </h2>
+        <ul className="mt-4 max-w-[720px] list-disc space-y-2 pl-5 font-body text-[16px] leading-[1.75] text-ink-soft md:text-[17px]">
+          <li>{"Every public tag attached to the video."}</li>
+          <li>{"A live character count against YouTube's 500-character tag limit."}</li>
+          <li>{"Keyword ideas pulled from the title, description, and tags."}</li>
+          <li>{"One-click copy of the full tag list."}</li>
+        </ul>
+
+        <h2 className="mt-12 font-display text-[26px] font-bold leading-tight tracking-[-0.01em] text-ink md:text-[32px]">
+          How it works
+        </h2>
+        <ol className="mt-4 max-w-[720px] list-decimal space-y-2 pl-5 font-body text-[16px] leading-[1.75] text-ink-soft md:text-[17px]">
+          <li>{"Copy the link to any public YouTube video."}</li>
+          <li>{"Paste it above and select Analyze."}</li>
+          <li>{"Copy the tags you want, or reuse the keyword ideas in your own metadata."}</li>
+        </ol>
+
+        <h2 className="mt-12 font-display text-[26px] font-bold leading-tight tracking-[-0.01em] text-ink md:text-[32px]">
+          Related tools
+        </h2>
+        <p className="mt-4 max-w-[720px] font-body text-[16px] leading-[1.75] text-ink-soft md:text-[17px]">
+          {"Same video, more tools: pull the "}
+          <Link href="/transcript" className="text-ochre-deep underline hover:text-ochre">
+            transcript
+          </Link>
+          {", "}
+          <Link href="/download" className="text-ochre-deep underline hover:text-ochre">
+            download the video or audio
+          </Link>
+          {", or grab a "}
+          <Link href="/thumbnails" className="text-ochre-deep underline hover:text-ochre">
+            thumbnail
+          </Link>
+          {". See "}
+          <Link href="/pricing" className="text-ochre-deep underline hover:text-ochre">
+            pricing
+          </Link>
+          {" for daily limits, or the "}
+          <Link href="/faq" className="text-ochre-deep underline hover:text-ochre">
+            FAQ
+          </Link>
+          {"."}
+        </p>
+      </section>
     </PageShell>
   );
 }

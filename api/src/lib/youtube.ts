@@ -336,7 +336,13 @@ export function parseVtt(content: string): TranscriptEntry[] {
 
     const textLines: string[] = [];
     i++;
-    for (; i < lines.length && lines[i].trim() !== '' && !VTT_TIMING_RE.test(lines[i]); i++) {
+    // Stop only on a TRULY empty line (the cue separator) or the next timing
+    // line — not on a whitespace-only line. YouTube's first auto-caption cue
+    // puts a single-space placeholder line before its text; treating that space
+    // as the terminator dropped the whole opening cue, so the transcript began
+    // at the second cue (e.g. 0:02 instead of 0:00). A blank cue separator is
+    // genuinely empty, so `!== ''` still ends the payload correctly.
+    for (; i < lines.length && lines[i] !== '' && !VTT_TIMING_RE.test(lines[i]); i++) {
       let t = lines[i].replace(/<[^>]+>/g, '');
       t = decodeEntities(t).trim();
       if (t && textLines[textLines.length - 1] !== t) textLines.push(t);

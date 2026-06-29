@@ -1,40 +1,9 @@
 import type { Metadata, Viewport } from "next";
-import {
-  Inter,
-  JetBrains_Mono,
-  Noto_Sans_Myanmar,
-  Plus_Jakarta_Sans,
-} from "next/font/google";
 import "./globals.css";
 import { AnalyticsTracker } from "@/components/AnalyticsTracker";
-import { LanguageProvider } from "@/components/LanguageProvider";
 import { ScrollTopButton } from "@/components/ScrollTopButton";
 import { ViewerAuthProvider } from "@/components/ViewerAuthProvider";
 import { BRAND, SITE_URL } from "@/lib/seo";
-
-const plusJakarta = Plus_Jakarta_Sans({
-  variable: "--font-display",
-  subsets: ["latin"],
-  style: ["normal", "italic"],
-});
-
-const inter = Inter({
-  variable: "--font-sans",
-  subsets: ["latin"],
-  style: ["normal", "italic"],
-});
-
-const jetbrainsMono = JetBrains_Mono({
-  variable: "--font-jetbrains-mono",
-  subsets: ["latin"],
-});
-
-const notoMyanmar = Noto_Sans_Myanmar({
-  variable: "--font-noto-myanmar",
-  subsets: ["myanmar"],
-  weight: ["400", "500", "700"],
-  preload: false,
-});
 
 export const viewport: Viewport = {
   colorScheme: "light dark",
@@ -71,20 +40,21 @@ export default function RootLayout({
   return (
     <html
       lang="en"
-      className={`${inter.variable} ${plusJakarta.variable} ${jetbrainsMono.variable} ${notoMyanmar.variable} h-full antialiased [overflow-x:clip]`}
+      className="h-full antialiased [overflow-x:clip]"
       suppressHydrationWarning
     >
       <body className="bea-paper relative min-h-full font-body text-ink [overflow-x:clip]">
+        {/* Warm up the origins used after a search (thumbnails, embedded player). */}
+        <link rel="preconnect" href="https://i.ytimg.com" />
+        <link rel="preconnect" href="https://www.youtube.com" />
         <script dangerouslySetInnerHTML={{ __html: themeInitScript }} />
-        <LanguageProvider>
-          <ViewerAuthProvider>
-            <div className="relative z-10 flex min-h-screen flex-col">
-              {children}
-            </div>
-            <ScrollTopButton />
-            <AnalyticsTracker />
-          </ViewerAuthProvider>
-        </LanguageProvider>
+        <ViewerAuthProvider>
+          <div className="relative z-10 flex min-h-screen flex-col">
+            {children}
+          </div>
+          <ScrollTopButton />
+          <AnalyticsTracker />
+        </ViewerAuthProvider>
       </body>
     </html>
   );

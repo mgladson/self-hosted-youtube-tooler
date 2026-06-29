@@ -3,9 +3,9 @@ import { TagsSeoContent } from "@/components/TagsSeoContent";
 import { buildMetadata } from "@/lib/seo";
 
 export const metadata: Metadata = buildMetadata({
-  title: "Tags & SEO",
+  title: "YouTube Tag Extractor & Keyword Tool",
   description:
-    "Extract a YouTube video's tags and discover keyword ideas for your own titles, tags, and descriptions.",
+    "See the hidden tags on any public YouTube video, check them against the 500-character limit, and get keyword ideas for your own titles, tags, and descriptions.",
   path: "/tags",
 });
 

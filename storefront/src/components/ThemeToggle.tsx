@@ -21,7 +21,7 @@ export function ThemeToggle() {
       title="Toggle dark mode"
       className="inline-flex h-9 w-9 items-center justify-center rounded-full text-ink-soft transition-colors hover:bg-paper-deep hover:text-ochre focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-current"
     >
-      {/* Moon — shown in light mode (click switches to dark) */}
+      {/* Moon: shown in light mode (click switches to dark) */}
       <svg
         className="block h-5 w-5 dark:hidden"
         viewBox="0 0 24 24"
@@ -34,7 +34,7 @@ export function ThemeToggle() {
       >
         <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79Z" />
       </svg>
-      {/* Sun — shown in dark mode (click switches to light) */}
+      {/* Sun: shown in dark mode (click switches to light) */}
       <svg
         className="hidden h-5 w-5 dark:block"
         viewBox="0 0 24 24"
