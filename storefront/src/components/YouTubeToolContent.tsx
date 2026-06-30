@@ -24,6 +24,7 @@ type Transcript = {
 };
 type Thumbnail = { url: string; width: number | null; height: number | null };
 type Chapter = { title: string; start: number };
+type HeatmapSegment = { start: number; end: number; value: number };
 type ExtractResult = {
   videoId: string;
   url: string;
@@ -41,6 +42,7 @@ type ExtractResult = {
   uploadDate: string | null;
   thumbnail: Thumbnail | null;
   chapters: Chapter[];
+  heatmap: HeatmapSegment[];
   transcript: Transcript;
 };
 type FormatsResult = {
@@ -226,6 +228,156 @@ function saveFile(filename: string, content: string) {
   URL.revokeObjectURL(url);
 }
 
+function saveBlob(filename: string, blob: Blob) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+// Local "YYYY-MM-DD HH:MM" stamp for the report's "Extracted" line.
+function formatStamp(d: Date): string {
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
+// Turn a video title into a filename that is safe on every OS (Windows, macOS,
+// Linux, Android, iOS): drop diacritics, keep only broadly-legal characters, turn
+// spaces into "-", trim leading/trailing dots/dashes, and dodge Windows' reserved
+// device names. Falls back to "video" if nothing usable remains.
+function safeFilename(title: string): string {
+  let s = (title || "")
+    .normalize("NFKD") // decompose accents so the whitelist drops the marks
+    .replace(/[^A-Za-z0-9._ -]/g, "") // keep only broadly-legal chars
+    .replace(/\s+/g, "-") // spaces → -
+    .replace(/-+/g, "-") // collapse repeats
+    .replace(/^[-.]+|[-.]+$/g, "") // no leading/trailing - or .
+    .slice(0, 120)
+    .replace(/[-.]+$/g, ""); // re-trim after the length cap
+  if (/^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/i.test(s)) s = `_${s}`;
+  return s || "video";
+}
+
+// ASCII bar for a heatmap value (0..1), 20 chars wide at full intensity.
+function heatmapBar(value: number): string {
+  return "#".repeat(Math.max(0, Math.floor(value * 20)));
+}
+
+// Build the downloadable video report (data-only for now — the Topic/Perspective
+// LLM analysis sections are a later addition). `thumbnailRef` is what goes in the
+// ![thumbnail](...) line: a YouTube URL for the standalone .md, or "thumbnail.jpg"
+// for the zip bundle.
+function toReportMarkdown(
+  result: ExtractResult,
+  thumbnailRef: string,
+  extractedAt: string,
+): string {
+  const watchUrl = `https://www.youtube.com/watch?v=${result.videoId}`;
+  const num = (n: number | null) => (n != null ? n.toLocaleString() : "N/A");
+  const lines: string[] = [`# ${result.title}`, "", `![thumbnail](${thumbnailRef})`, ""];
+
+  const meta: string[] = [
+    `**Title:** ${result.title}`,
+    `**Source:** [${result.channel}](${watchUrl})`,
+  ];
+  if (result.durationText) meta.push(`**Duration:** ${result.durationText}`);
+  if (result.uploadDate) meta.push(`**Uploaded:** ${result.uploadDate}`);
+  if (result.categories.length) meta.push(`**Category:** ${result.categories.join(", ")}`);
+  meta.push(`**Extracted:** ${extractedAt}`);
+  if (result.tags.length) meta.push(`**Tags:** ${result.tags.join(", ")}`);
+  lines.push(meta.map((m) => `> ${m}  `).join("\n"), "");
+
+  lines.push("## Engagement", "");
+  lines.push("| Metric | Value |", "|--------|-------|");
+  lines.push(`| Views | ${num(result.viewCount)} |`);
+  lines.push(`| Likes | ${num(result.likeCount)} |`);
+  lines.push(`| Comments | ${num(result.commentCount)} |`);
+  lines.push(`| Subscribers | ${num(result.channelFollowerCount)} |`);
+  const ratio =
+    result.likeCount != null && result.viewCount
+      ? `${((result.likeCount / result.viewCount) * 100).toFixed(2)}%`
+      : "N/A";
+  lines.push(`| Like ratio | ${ratio} |`, "");
+
+  lines.push("## Heatmap (Viewer Retention)", "");
+  if (result.heatmap.length) {
+    lines.push("Shows which segments viewers rewatched or skipped.", "");
+    lines.push("| Timestamp | Engagement |", "|-----------|------------|");
+    for (const h of result.heatmap) {
+      lines.push(`| \`${formatTime(h.start)}\` | ${heatmapBar(h.value)} ${h.value.toFixed(2)} |`);
+    }
+    lines.push("");
+  } else {
+    lines.push("_No heatmap data available for this video._", "");
+  }
+
+  lines.push("## Video Description", "");
+  lines.push("```", result.description || "(no description)", "```", "");
+
+  lines.push("## Chapters", "");
+  if (result.chapters.length) {
+    lines.push("| Timestamp | Title |", "|-----------|-------|");
+    for (const c of result.chapters) {
+      lines.push(`| \`${formatTime(c.start)}\` | ${c.title} |`);
+    }
+    lines.push("");
+  } else {
+    lines.push("_This video has no chapters._", "");
+  }
+
+  return lines.join("\n");
+}
+
+// Minimal CRC-32 (for the hand-rolled zip below; avoids a zip dependency).
+function crc32(bytes: Uint8Array): number {
+  let crc = 0xffffffff;
+  for (let i = 0; i < bytes.length; i++) {
+    crc ^= bytes[i];
+    for (let j = 0; j < 8; j++) crc = (crc >>> 1) ^ (0xedb88320 & -(crc & 1));
+  }
+  return (crc ^ 0xffffffff) >>> 0;
+}
+
+// Build an uncompressed ("stored") ZIP from a few small files. Stored is fine:
+// the only binary entry is an already-compressed JPEG.
+function buildZip(files: { name: string; data: Uint8Array }[]): Blob {
+  const enc = new TextEncoder();
+  const u16 = (n: number) => [n & 0xff, (n >>> 8) & 0xff];
+  const u32 = (n: number) => [n & 0xff, (n >>> 8) & 0xff, (n >>> 16) & 0xff, (n >>> 24) & 0xff];
+  const parts: Uint8Array[] = [];
+  const central: number[] = [];
+  let offset = 0;
+
+  for (const f of files) {
+    const name = enc.encode(f.name);
+    const crc = crc32(f.data);
+    const size = f.data.length;
+    const local = Uint8Array.from([
+      ...u32(0x04034b50), ...u16(20), ...u16(0), ...u16(0), ...u16(0), ...u16(0),
+      ...u32(crc), ...u32(size), ...u32(size), ...u16(name.length), ...u16(0),
+      ...name,
+    ]);
+    parts.push(local, f.data);
+    central.push(
+      ...u32(0x02014b50), ...u16(20), ...u16(20), ...u16(0), ...u16(0), ...u16(0), ...u16(0),
+      ...u32(crc), ...u32(size), ...u32(size), ...u16(name.length), ...u16(0), ...u16(0),
+      ...u16(0), ...u16(0), ...u32(0), ...u32(offset), ...name,
+    );
+    offset += local.length + size;
+  }
+
+  const centralBytes = Uint8Array.from(central);
+  const eocd = Uint8Array.from([
+    ...u32(0x06054b50), ...u16(0), ...u16(0), ...u16(files.length), ...u16(files.length),
+    ...u32(centralBytes.length), ...u32(offset), ...u16(0),
+  ]);
+  return new Blob([...parts, centralBytes, eocd] as BlobPart[], { type: "application/zip" });
+}
+
 // Markdown export: clean prose under a heading with source context. Markdown is
 // the most token-efficient, structure-preserving format to hand to an LLM.
 function toMarkdown(result: { videoId: string; language: string | null; isAutomatic: boolean }, plainText: string): string {
@@ -355,6 +507,8 @@ export function YouTubeToolContent() {
   }, []);
 
   const videoId = result?.videoId ?? "";
+  // Base name for every download on this page: the sanitized video title.
+  const titleSlug = result ? safeFilename(result.title) : "video";
   const previewSrc = (key: string) => `https://i.ytimg.com/vi/${videoId}/${key}.jpg`;
   const downloadThumbHref = (key: string) =>
     `${API_BASE}/youtube/thumbnail?id=${videoId}&res=${key}`;
@@ -398,7 +552,7 @@ export function YouTubeToolContent() {
             </button>
             <a
               href={downloadThumbHref(r.key)}
-              download={`${videoId}-${r.key}.jpg`}
+              download={`${titleSlug}-${r.key}.jpg`}
               className="font-mono text-[11px] uppercase tracking-[0.14em] text-ochre-deep transition-colors hover:text-ochre"
             >
               Download
@@ -442,6 +596,59 @@ export function YouTubeToolContent() {
     });
   }, [result]);
 
+  // ---- Report download (.md and .zip-with-thumbnail) ---------------------
+  const [zipBusy, setZipBusy] = useState(false);
+
+  const downloadReportMd = useCallback(() => {
+    if (!result) return;
+    const thumb =
+      result.thumbnail?.url || `https://i.ytimg.com/vi/${result.videoId}/hqdefault.jpg`;
+    saveFile(
+      `${safeFilename(result.title)}.md`,
+      toReportMarkdown(result, thumb, formatStamp(new Date())),
+    );
+  }, [result]);
+
+  const downloadReportZip = useCallback(async () => {
+    if (!result || zipBusy) return;
+    setZipBusy(true);
+    try {
+      const md = toReportMarkdown(result, "thumbnail.jpg", formatStamp(new Date()));
+      // Thumbnail bytes via our same-origin proxy (i.ytimg blocks cross-origin fetch).
+      let img: Uint8Array | null = null;
+      for (const res of ["maxresdefault", "hqdefault"]) {
+        try {
+          const r = await fetch(`${API_BASE}/youtube/thumbnail?id=${result.videoId}&res=${res}`);
+          if (r.ok) {
+            img = new Uint8Array(await r.arrayBuffer());
+            break;
+          }
+        } catch {
+          // try the next resolution
+        }
+      }
+      const enc = new TextEncoder();
+      const files: { name: string; data: Uint8Array }[] = [
+        { name: "report.md", data: enc.encode(md) },
+      ];
+      if (img) files.push({ name: "thumbnail.jpg", data: img });
+      // Both transcript views, when the video has captions.
+      const tx = result.transcript;
+      if (tx?.available) {
+        const plain = stripNonSpeech(tx.isAutomatic ? dedupeRolling(tx.entries) : tx.text);
+        const timed = tx.isAutomatic ? dedupeRollingEntries(tx.entries) : tx.entries;
+        files.push({ name: "transcript-plain.txt", data: enc.encode(plain) });
+        files.push({
+          name: "transcript-timestamped.txt",
+          data: enc.encode(timed.map((e) => `[${formatTime(e.start)}] ${e.text}`).join("\n")),
+        });
+      }
+      saveBlob(`${safeFilename(result.title)}.zip`, buildZip(files));
+    } finally {
+      setZipBusy(false);
+    }
+  }, [result, zipBusy]);
+
   // ---- Transcript --------------------------------------------------------
   const transcript = result?.transcript;
   const plainText = useMemo(() => {
@@ -474,7 +681,7 @@ export function YouTubeToolContent() {
     });
   }, [transcript, view, plainText, timedEntries]);
 
-  const fileBase = videoId ? `transcript-${videoId}` : "transcript";
+  const fileBase = titleSlug;
   const toolBtn =
     "border border-ink/60 px-3 py-1.5 font-mono text-[11px] uppercase tracking-[0.16em] text-ink-soft transition-colors hover:border-ochre hover:text-ochre";
 
@@ -505,6 +712,15 @@ export function YouTubeToolContent() {
   const showDownload = isOverview || tool === "download";
   const showTags = isOverview || tool === "tags";
   const showTranscript = isOverview || tool === "transcript";
+
+  // "Most replayed" graph data (empty unless YouTube computed one for this video).
+  // Each segment's value is 0..1; points map the curve into a 0..100 SVG box.
+  const heatmap = result?.heatmap ?? [];
+  const heatmapPeak =
+    heatmap.length > 0 ? heatmap.reduce((a, b) => (b.value > a.value ? b : a)) : null;
+  const heatmapPoints = heatmap
+    .map((h, i) => `${i},${(100 - h.value * 100).toFixed(2)}`)
+    .join(" ");
 
   // One Statistics tile: a muted label over a large value, with the exact count
   // (when abbreviated) shown on hover.
@@ -602,7 +818,7 @@ export function YouTubeToolContent() {
                   <h3 className="font-display text-[18px] font-bold text-ink">Statistics</h3>
                   <div className="mt-4 grid grid-cols-2 gap-3">
                     {statTile("Views", abbreviate(result.viewCount), "text-ink", formatCount(result.viewCount) || undefined)}
-                    {statTile("Likes", abbreviate(result.likeCount), "text-crimson", formatCount(result.likeCount) || undefined)}
+                    {statTile("Likes", abbreviate(result.likeCount), "text-jade", formatCount(result.likeCount) || undefined)}
                     {statTile("Comments", abbreviate(result.commentCount), "text-ochre", formatCount(result.commentCount) || undefined)}
                     {statTile("Duration", result.durationText ?? "N/A")}
                   </div>
@@ -613,6 +829,45 @@ export function YouTubeToolContent() {
                     <p className="mt-1 font-mono text-[13px] text-ink-soft">{videoId}</p>
                   </div>
                 </div>
+                {heatmap.length > 0 && (
+                  <div className="rounded-xl border border-rule-strong bg-paper-deep p-5">
+                    <h3 className="font-display text-[18px] font-bold text-ink">
+                      Most Replayed
+                    </h3>
+                    <svg
+                      viewBox={`0 0 ${heatmap.length - 1} 100`}
+                      preserveAspectRatio="none"
+                      className="mt-4 h-16 w-full text-ochre"
+                      aria-hidden="true"
+                    >
+                      <polygon
+                        points={`0,100 ${heatmapPoints} ${heatmap.length - 1},100`}
+                        fill="currentColor"
+                        fillOpacity={0.22}
+                      />
+                      <polyline
+                        points={heatmapPoints}
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth={1.5}
+                        vectorEffect="non-scaling-stroke"
+                      />
+                    </svg>
+                    {heatmapPeak && (
+                      <p className="mt-3 text-center font-mono text-[11px] uppercase tracking-[0.14em] text-ink-muted">
+                        Peak at{" "}
+                        <a
+                          href={`https://www.youtube.com/watch?v=${videoId}&t=${Math.floor(heatmapPeak.start)}s`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-ochre-deep transition-colors hover:text-ochre"
+                        >
+                          {formatTime(heatmapPeak.start)}
+                        </a>
+                      </p>
+                    )}
+                  </div>
+                )}
               </div>
               <div>
                 <h2 className="font-display text-[28px] font-black leading-[1.12] tracking-[-0.01em] text-ink md:text-[32px]">
@@ -669,6 +924,25 @@ export function YouTubeToolContent() {
                       {formatDate(result.uploadDate)}
                     </span>
                   )}
+                  <div className="ml-auto flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={downloadReportMd}
+                      className="inline-flex items-center gap-1.5 border border-ink/60 px-3 py-2 font-mono text-[11px] uppercase tracking-[0.14em] text-ink-soft transition-colors hover:border-ochre hover:text-ochre"
+                    >
+                      <span aria-hidden="true">⬇️</span>
+                      <span>Markdown (.md)</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={downloadReportZip}
+                      disabled={zipBusy}
+                      className="inline-flex items-center gap-1.5 border border-ink/60 px-3 py-2 font-mono text-[11px] uppercase tracking-[0.14em] text-ink-soft transition-colors hover:border-ochre hover:text-ochre disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      <span aria-hidden="true">⬇️</span>
+                      <span>{zipBusy ? "Preparing…" : "Bundle (.zip)"}</span>
+                    </button>
+                  </div>
                 </div>
 
                 {result.categories.length > 0 && (
@@ -684,65 +958,69 @@ export function YouTubeToolContent() {
                   </div>
                 )}
 
-                {(tags.length > 0 || result.chapters.length > 0) && (
-                  <div
-                    className={`mt-6 grid grid-cols-1 items-start gap-6 ${
-                      tags.length > 0 && result.chapters.length > 0 ? "lg:grid-cols-2" : ""
-                    }`}
-                  >
-                    {tags.length > 0 && (
-                      <div>
-                        <div className="flex items-center justify-between gap-3">
-                          <h3 className="label-eyebrow text-ink">Tags</h3>
-                          <button
-                            type="button"
-                            onClick={copyTags}
-                            className="inline-flex items-center gap-1.5 font-mono text-[11px] uppercase tracking-[0.14em] text-ochre-deep transition-colors hover:text-ochre"
+                <div className="mt-6 grid grid-cols-1 items-start gap-6 lg:grid-cols-2">
+                  <div>
+                    <div className="flex items-center justify-between gap-3">
+                      <h3 className="label-eyebrow text-ink">Tags</h3>
+                      {tags.length > 0 && (
+                        <button
+                          type="button"
+                          onClick={copyTags}
+                          className="inline-flex items-center gap-1.5 font-mono text-[11px] uppercase tracking-[0.14em] text-ochre-deep transition-colors hover:text-ochre"
+                        >
+                          {copyIcon(copiedTags)}
+                          {copiedTags ? "Copied" : "Copy Tags"}
+                        </button>
+                      )}
+                    </div>
+                    {tags.length > 0 ? (
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        {tags.map((tag, i) => (
+                          <span
+                            key={`${tag}-${i}`}
+                            className="rounded-lg border border-rule bg-paper px-2.5 py-1 font-mono text-[12px] text-ink-soft"
                           >
-                            {copyIcon(copiedTags)}
-                            {copiedTags ? "Copied" : "Copy Tags"}
-                          </button>
-                        </div>
-                        <div className="mt-3 flex flex-wrap gap-2">
-                          {tags.map((tag, i) => (
-                            <span
-                              key={`${tag}-${i}`}
-                              className="rounded-lg border border-rule bg-paper px-2.5 py-1 font-mono text-[12px] text-ink-soft"
-                            >
-                              {tag}
-                            </span>
-                          ))}
-                        </div>
+                            {tag}
+                          </span>
+                        ))}
                       </div>
-                    )}
-                    {result.chapters.length > 0 && (
-                      <div>
-                        <h3 className="label-eyebrow text-ink">
-                          Chapters ({result.chapters.length})
-                        </h3>
-                        <ol className="mt-3 max-h-[280px] overflow-y-auto rounded-xl border border-rule bg-paper">
-                          {result.chapters.map((c, i) => (
-                            <li key={i} className="border-b border-rule last:border-b-0">
-                              <a
-                                href={`https://www.youtube.com/watch?v=${videoId}&t=${Math.floor(c.start)}s`}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="flex gap-3 px-4 py-2 transition-colors hover:bg-paper-warm"
-                              >
-                                <span className="shrink-0 font-mono text-[12px] text-ochre-deep">
-                                  {formatTime(c.start)}
-                                </span>
-                                <span className="font-body text-[14px] leading-snug text-ink-soft">
-                                  {c.title}
-                                </span>
-                              </a>
-                            </li>
-                          ))}
-                        </ol>
-                      </div>
+                    ) : (
+                      <p className="mt-3 font-body text-[14px] italic text-ink-muted">
+                        This video has no public tags.
+                      </p>
                     )}
                   </div>
-                )}
+                  <div>
+                    <h3 className="label-eyebrow text-ink">
+                      Chapters{result.chapters.length > 0 ? ` (${result.chapters.length})` : ""}
+                    </h3>
+                    {result.chapters.length > 0 ? (
+                      <ol className="mt-3 max-h-[280px] overflow-y-auto rounded-xl border border-rule bg-paper">
+                        {result.chapters.map((c, i) => (
+                          <li key={i} className="border-b border-rule last:border-b-0">
+                            <a
+                              href={`https://www.youtube.com/watch?v=${videoId}&t=${Math.floor(c.start)}s`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="flex gap-3 px-4 py-2 transition-colors hover:bg-paper-warm"
+                            >
+                              <span className="shrink-0 font-mono text-[12px] text-ochre-deep">
+                                {formatTime(c.start)}
+                              </span>
+                              <span className="font-body text-[14px] leading-snug text-ink-soft">
+                                {c.title}
+                              </span>
+                            </a>
+                          </li>
+                        ))}
+                      </ol>
+                    ) : (
+                      <p className="mt-3 font-body text-[14px] italic text-ink-muted">
+                        This video has no chapters.
+                      </p>
+                    )}
+                  </div>
+                </div>
 
                 {result.description && (
                   <div className="mt-6">
@@ -795,7 +1073,7 @@ export function YouTubeToolContent() {
                   <div className="flex flex-wrap items-center gap-4">
                     <a
                       href={downloadThumbHref(hero.key)}
-                      download={`${videoId}-${hero.key}.jpg`}
+                      download={`${titleSlug}-${hero.key}.jpg`}
                       className="inline-block border border-ochre bg-ochre px-6 py-3 text-center font-mono text-[12px] uppercase tracking-[0.18em] text-paper transition-colors hover:bg-ochre-deep"
                     >
                       Download {hero.w}×{hero.h}
@@ -919,6 +1197,7 @@ export function YouTubeToolContent() {
                         href={dlHref(String(h))}
                         label={HEIGHT_LABELS[h] ?? `${h}p`}
                         quality={String(h)}
+                        filename={`${titleSlug}.mp4`}
                       />
                     ))}
                   </div>
@@ -937,6 +1216,7 @@ export function YouTubeToolContent() {
                         label="Audio (MP3)"
                         quality="audio"
                         variant="secondary"
+                        filename={`${titleSlug}.mp3`}
                       />
                     </div>
                   </>
@@ -1061,9 +1341,10 @@ export function YouTubeToolContent() {
                     <button
                       type="button"
                       onClick={() => saveFile(`${fileBase}.txt`, plainText)}
-                      className={toolBtn}
+                      className={`${toolBtn} inline-flex items-center gap-1.5`}
                     >
-                      TXT
+                      <span aria-hidden="true">⬇️</span>
+                      .TXT
                     </button>
                     <button
                       type="button"
@@ -1080,16 +1361,18 @@ export function YouTubeToolContent() {
                           ),
                         )
                       }
-                      className={toolBtn}
+                      className={`${toolBtn} inline-flex items-center gap-1.5`}
                     >
-                      MD
+                      <span aria-hidden="true">⬇️</span>
+                      .MD
                     </button>
                     <button
                       type="button"
                       onClick={() => saveFile(`${fileBase}.srt`, toSrt(timedEntries))}
-                      className={toolBtn}
+                      className={`${toolBtn} inline-flex items-center gap-1.5`}
                     >
-                      SRT
+                      <span aria-hidden="true">⬇️</span>
+                      .SRT
                     </button>
                   </div>
                 </div>

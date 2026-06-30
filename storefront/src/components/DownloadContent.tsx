@@ -32,6 +32,22 @@ const HEIGHT_LABELS: Record<number, string> = {
 // The backend only merges/serves these heights as a download quality.
 const DOWNLOADABLE = [2160, 1440, 1080, 720, 480, 360];
 
+// Turn a video title into a filename that is safe on every OS (Windows, macOS,
+// Linux, Android, iOS): keep only broadly-legal characters, spaces → "-", trim
+// stray dots/dashes, dodge Windows' reserved device names. Falls back to "video".
+function safeFilename(title: string): string {
+  let s = (title || "")
+    .normalize("NFKD")
+    .replace(/[^A-Za-z0-9._ -]/g, "")
+    .replace(/\s+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^[-.]+|[-.]+$/g, "")
+    .slice(0, 120)
+    .replace(/[-.]+$/g, "");
+  if (/^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/i.test(s)) s = `_${s}`;
+  return s || "video";
+}
+
 export function DownloadContent() {
   const [url, setUrl] = useState("");
   const [loading, setLoading] = useState(false);
@@ -73,6 +89,8 @@ export function DownloadContent() {
   const videoQualities = info
     ? DOWNLOADABLE.filter((h) => info.heights.includes(h))
     : [];
+
+  const titleSlug = info ? safeFilename(info.title) : "video";
 
   return (
     <PageShell
@@ -118,6 +136,7 @@ export function DownloadContent() {
                   href={dlHref(String(h))}
                   label={HEIGHT_LABELS[h] ?? `${h}p`}
                   quality={String(h)}
+                  filename={`${titleSlug}.mp4`}
                 />
               ))}
             </div>
@@ -136,6 +155,7 @@ export function DownloadContent() {
                   label="Audio (MP3)"
                   quality="audio"
                   variant="secondary"
+                  filename={`${titleSlug}.mp3`}
                 />
               </div>
             </>

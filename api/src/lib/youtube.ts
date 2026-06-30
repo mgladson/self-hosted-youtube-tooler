@@ -44,6 +44,12 @@ export type Chapter = {
   start: number; // seconds
 };
 
+export type HeatmapSegment = {
+  start: number; // seconds
+  end: number; // seconds
+  value: number; // 0..1, relative replay intensity ("most replayed")
+};
+
 export type YouTubeThumbnail = {
   url: string;
   width: number | null;
@@ -70,6 +76,7 @@ export type YouTubeMetadata = {
   thumbnail: YouTubeThumbnail | null;
   thumbnails: YouTubeThumbnail[];
   chapters: Chapter[];
+  heatmap: HeatmapSegment[];
 };
 
 export type Transcript = {
@@ -251,6 +258,17 @@ export function mapMetadata(j: RawMeta, requestedUrl: string): YouTubeMetadata {
     return { title: str(o.title), start: numOrNull(o.start_time) ?? 0 };
   });
 
+  // "Most replayed" graph: ~100 segments of {start_time, end_time, value 0..1}.
+  // Only present on videos YouTube has computed it for; absent → empty array.
+  const heatmap: HeatmapSegment[] = (Array.isArray(j.heatmap) ? j.heatmap : []).map((h) => {
+    const o = h as RawMeta;
+    return {
+      start: numOrNull(o.start_time) ?? 0,
+      end: numOrNull(o.end_time) ?? 0,
+      value: numOrNull(o.value) ?? 0,
+    };
+  });
+
   const duration = numOrNull(j.duration);
   const uploadRaw = str(j.upload_date);
   const uploadDate = /^\d{8}$/.test(uploadRaw)
@@ -277,6 +295,7 @@ export function mapMetadata(j: RawMeta, requestedUrl: string): YouTubeMetadata {
     thumbnail,
     thumbnails,
     chapters,
+    heatmap,
   };
 }
 

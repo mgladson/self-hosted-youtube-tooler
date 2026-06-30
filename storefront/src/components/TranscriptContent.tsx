@@ -140,6 +140,78 @@ function saveFile(filename: string, content: string) {
   URL.revokeObjectURL(url);
 }
 
+function saveBlob(filename: string, blob: Blob) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+// Minimal CRC-32 (for the hand-rolled zip below; avoids a zip dependency).
+function crc32(bytes: Uint8Array): number {
+  let crc = 0xffffffff;
+  for (let i = 0; i < bytes.length; i++) {
+    crc ^= bytes[i];
+    for (let j = 0; j < 8; j++) crc = (crc >>> 1) ^ (0xedb88320 & -(crc & 1));
+  }
+  return (crc ^ 0xffffffff) >>> 0;
+}
+
+// Build an uncompressed ("stored") ZIP from a few small files.
+function buildZip(files: { name: string; data: Uint8Array }[]): Blob {
+  const enc = new TextEncoder();
+  const u16 = (n: number) => [n & 0xff, (n >>> 8) & 0xff];
+  const u32 = (n: number) => [n & 0xff, (n >>> 8) & 0xff, (n >>> 16) & 0xff, (n >>> 24) & 0xff];
+  const parts: Uint8Array[] = [];
+  const central: number[] = [];
+  let offset = 0;
+
+  for (const f of files) {
+    const name = enc.encode(f.name);
+    const crc = crc32(f.data);
+    const size = f.data.length;
+    const local = Uint8Array.from([
+      ...u32(0x04034b50), ...u16(20), ...u16(0), ...u16(0), ...u16(0), ...u16(0),
+      ...u32(crc), ...u32(size), ...u32(size), ...u16(name.length), ...u16(0),
+      ...name,
+    ]);
+    parts.push(local, f.data);
+    central.push(
+      ...u32(0x02014b50), ...u16(20), ...u16(20), ...u16(0), ...u16(0), ...u16(0), ...u16(0),
+      ...u32(crc), ...u32(size), ...u32(size), ...u16(name.length), ...u16(0), ...u16(0),
+      ...u16(0), ...u16(0), ...u32(0), ...u32(offset), ...name,
+    );
+    offset += local.length + size;
+  }
+
+  const centralBytes = Uint8Array.from(central);
+  const eocd = Uint8Array.from([
+    ...u32(0x06054b50), ...u16(0), ...u16(0), ...u16(files.length), ...u16(files.length),
+    ...u32(centralBytes.length), ...u32(offset), ...u16(0),
+  ]);
+  return new Blob([...parts, centralBytes, eocd] as BlobPart[], { type: "application/zip" });
+}
+
+// Turn a video title into a filename that is safe on every OS (Windows, macOS,
+// Linux, Android, iOS): keep only broadly-legal characters, spaces → "-", trim
+// stray dots/dashes, dodge Windows' reserved device names. Falls back to "video".
+function safeFilename(title: string): string {
+  let s = (title || "")
+    .normalize("NFKD")
+    .replace(/[^A-Za-z0-9._ -]/g, "")
+    .replace(/\s+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^[-.]+|[-.]+$/g, "")
+    .slice(0, 120)
+    .replace(/[-.]+$/g, "");
+  if (/^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/i.test(s)) s = `_${s}`;
+  return s || "video";
+}
+
 // Markdown export: clean prose under a heading with source context. Markdown is
 // the most token-efficient, structure-preserving format to hand to an LLM.
 function toMarkdown(result: TranscriptResult, plainText: string): string {
@@ -159,6 +231,7 @@ export function TranscriptContent() {
   const [result, setResult] = useState<TranscriptResult | null>(null);
   const [view, setView] = useState<"plain" | "timestamped">("plain");
   const [copied, setCopied] = useState(false);
+  const [title, setTitle] = useState<string | null>(null);
 
   const onSubmit = useCallback(
     async (e: FormEvent) => {
@@ -168,7 +241,13 @@ export function TranscriptContent() {
       setLoading(true);
       setError(null);
       setResult(null);
+      setTitle(null);
       setView("plain");
+      // Title for download filenames (the transcript endpoint omits it).
+      fetch(`${API_BASE}/youtube/formats?url=${encodeURIComponent(value)}`)
+        .then((r) => (r.ok ? r.json() : null))
+        .then((f) => setTitle(f?.title ?? null))
+        .catch(() => {});
       try {
         const res = await fetch(
           `${API_BASE}/youtube/transcript?url=${encodeURIComponent(value)}`,
@@ -219,7 +298,30 @@ export function TranscriptContent() {
     });
   }, [result, view, plainText, timedEntries]);
 
-  const fileBase = result?.videoId ? `transcript-${result.videoId}` : "transcript";
+  // Bundle BOTH transcript views into one .zip (plain + [M:SS] timestamped).
+  const downloadTranscriptZip = useCallback(() => {
+    if (!result?.available) return;
+    const enc = new TextEncoder();
+    const timed = timedEntries.map((e) => `[${formatTime(e.start)}] ${e.text}`).join("\n");
+    const base = title
+      ? safeFilename(title)
+      : result.videoId
+        ? `transcript-${result.videoId}`
+        : "transcript";
+    saveBlob(
+      `${base}.zip`,
+      buildZip([
+        { name: "transcript-plain.txt", data: enc.encode(plainText) },
+        { name: "transcript-timestamped.txt", data: enc.encode(timed) },
+      ]),
+    );
+  }, [result, plainText, timedEntries, title]);
+
+  const fileBase = title
+    ? safeFilename(title)
+    : result?.videoId
+      ? `transcript-${result.videoId}`
+      : "transcript";
 
   const toolBtn =
     "border border-ink/60 px-3 py-1.5 font-mono text-[11px] uppercase tracking-[0.16em] text-ink-soft transition-colors hover:border-ochre hover:text-ochre";
@@ -228,15 +330,17 @@ export function TranscriptContent() {
   // renders the thumbnail, title, and play button until the viewer clicks to
   // play in place. Defined once and reused by both result branches below.
   const videoEmbed = result?.videoId ? (
-    <iframe
-      className="mb-6 aspect-video w-full border border-rule"
-      src={`https://www.youtube.com/embed/${result.videoId}`}
-      title={`YouTube video player: ${result.videoId}`}
-      allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-      referrerPolicy="strict-origin-when-cross-origin"
-      allowFullScreen
-      loading="lazy"
-    />
+    <div className="mb-6 max-w-[340px] overflow-hidden rounded-xl border border-rule-strong">
+      <iframe
+        className="block aspect-video w-full"
+        src={`https://www.youtube.com/embed/${result.videoId}`}
+        title={`YouTube video player: ${result.videoId}`}
+        allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+        referrerPolicy="strict-origin-when-cross-origin"
+        allowFullScreen
+        loading="lazy"
+      />
+    </div>
   ) : null;
 
   return (
@@ -307,23 +411,35 @@ export function TranscriptContent() {
                 <button
                   type="button"
                   onClick={() => saveFile(`${fileBase}.txt`, plainText)}
-                  className={toolBtn}
+                  className={`${toolBtn} inline-flex items-center gap-1.5`}
                 >
-                  TXT
+                  <span aria-hidden="true">⬇️</span>
+                  .TXT
                 </button>
                 <button
                   type="button"
                   onClick={() => saveFile(`${fileBase}.md`, toMarkdown(result, plainText))}
-                  className={toolBtn}
+                  className={`${toolBtn} inline-flex items-center gap-1.5`}
                 >
-                  MD
+                  <span aria-hidden="true">⬇️</span>
+                  .MD
                 </button>
                 <button
                   type="button"
                   onClick={() => saveFile(`${fileBase}.srt`, toSrt(timedEntries))}
-                  className={toolBtn}
+                  className={`${toolBtn} inline-flex items-center gap-1.5`}
                 >
-                  SRT
+                  <span aria-hidden="true">⬇️</span>
+                  .SRT
+                </button>
+                <button
+                  type="button"
+                  onClick={downloadTranscriptZip}
+                  title="Both transcript views (plain + timestamped) as a .zip"
+                  className={`${toolBtn} inline-flex items-center gap-1.5`}
+                >
+                  <span aria-hidden="true">⬇️</span>
+                  .ZIP
                 </button>
               </div>
             </div>

@@ -19,11 +19,13 @@ export function DownloadButton({
   href,
   label,
   quality,
+  filename,
   variant = "primary",
 }: {
   href: string;
   label: string;
   quality: string;
+  filename?: string;
   variant?: "primary" | "secondary";
 }) {
   const { plan, loading } = useViewerAuth();
@@ -46,7 +48,7 @@ export function DownloadButton({
   }
 
   return (
-    <a href={href} download className={cls}>
+    <a href={href} download={filename ?? ""} className={cls}>
       {label}
     </a>
   );

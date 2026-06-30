@@ -44,12 +44,29 @@ function parseVideoId(input: string): string | null {
   return m ? m[0] : null;
 }
 
+// Turn a video title into a filename that is safe on every OS (Windows, macOS,
+// Linux, Android, iOS): keep only broadly-legal characters, spaces → "-", trim
+// stray dots/dashes, dodge Windows' reserved device names. Falls back to "video".
+function safeFilename(title: string): string {
+  let s = (title || "")
+    .normalize("NFKD")
+    .replace(/[^A-Za-z0-9._ -]/g, "")
+    .replace(/\s+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^[-.]+|[-.]+$/g, "")
+    .slice(0, 120)
+    .replace(/[-.]+$/g, "");
+  if (/^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/i.test(s)) s = `_${s}`;
+  return s || "video";
+}
+
 export function ThumbnailStudioContent() {
   const [url, setUrl] = useState("");
   const [videoId, setVideoId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [unavailable, setUnavailable] = useState<Record<string, boolean>>({});
   const [copied, setCopied] = useState<string | null>(null);
+  const [title, setTitle] = useState<string | null>(null);
 
   const onSubmit = useCallback(
     (e: FormEvent) => {
@@ -62,7 +79,13 @@ export function ThumbnailStudioContent() {
       }
       setError(null);
       setUnavailable({});
+      setTitle(null);
       setVideoId(id);
+      // Fetch the title (for download filenames) without blocking the thumbnails.
+      fetch(`${API_BASE}/youtube/formats?url=${encodeURIComponent(id)}`)
+        .then((r) => (r.ok ? r.json() : null))
+        .then((f) => setTitle(f?.title ?? null))
+        .catch(() => {});
     },
     [url],
   );
@@ -80,6 +103,8 @@ export function ThumbnailStudioContent() {
 
   const previewSrc = (key: string) => `https://i.ytimg.com/vi/${videoId}/${key}.jpg`;
   const downloadHref = (key: string) => `${API_BASE}/youtube/thumbnail?id=${videoId}&res=${key}`;
+  // Download filename base: the sanitized title once loaded, else the video id.
+  const base = title ? safeFilename(title) : videoId ?? "thumbnail";
 
   // YouTube returns a 120×90 gray placeholder (HTTP 200, not a 404) when a larger
   // size was never generated, so width-checking on load catches what onError misses.
@@ -122,7 +147,7 @@ export function ThumbnailStudioContent() {
             </button>
             <a
               href={downloadHref(r.key)}
-              download={`${videoId}-${r.key}.jpg`}
+              download={`${base}-${r.key}.jpg`}
               className="font-mono text-[11px] uppercase tracking-[0.14em] text-ochre-deep transition-colors hover:text-ochre"
             >
               Download
@@ -181,7 +206,7 @@ export function ThumbnailStudioContent() {
                 <div className="flex flex-wrap items-center gap-4">
                   <a
                     href={downloadHref(hero.key)}
-                    download={`${videoId}-${hero.key}.jpg`}
+                    download={`${base}-${hero.key}.jpg`}
                     className="inline-block border border-ochre bg-ochre px-6 py-3 text-center font-mono text-[12px] uppercase tracking-[0.18em] text-paper transition-colors hover:bg-ochre-deep"
                   >
                     Download {hero.w}×{hero.h}
