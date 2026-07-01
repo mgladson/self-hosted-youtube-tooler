@@ -54,9 +54,7 @@ const TOOLS: Tool[] = [
     view: "overview",
     icon: (
       <ToolIcon>
-        <circle cx="12" cy="12" r="9" />
-        <path d="M12 16v-4" />
-        <path d="M12 8h.01" />
+        <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
       </ToolIcon>
     ),
   },
@@ -134,7 +132,7 @@ export function SiteHeader() {
             Your Site
           </Link>
           <p className="mt-1 font-display text-[13px] italic text-ink-soft sm:text-[14px]">
-            By youtubers, for youtubers
+            By content creators, for content creators
           </p>
         </div>
         <nav className="flex items-center gap-5 font-display text-[16px] text-ink-soft">
@@ -163,19 +161,56 @@ export function SiteHeader() {
               </Link>
             );
           })}
+          {/* Playlist is a standalone batch tool (not part of the homepage in-place
+              ToolTabs switcher), so it lives here as its own link rather than in TOOLS. */}
+          <Link
+            href="/playlist"
+            onClick={resetIfSamePage("/playlist")}
+            aria-current={pathname === "/playlist" ? "page" : undefined}
+            className={`inline-flex items-center gap-1.5 transition-colors hover:text-ochre ${
+              pathname === "/playlist" ? "text-ochre" : ""
+            }`}
+          >
+            <ToolIcon>
+              <path d="M3 6h13" />
+              <path d="M3 12h13" />
+              <path d="M3 18h9" />
+              <path d="M17 11l5 3-5 3z" />
+            </ToolIcon>
+            <span
+              className={
+                pathname === "/playlist"
+                  ? "underline decoration-2 underline-offset-[6px]"
+                  : undefined
+              }
+            >
+              Playlist
+            </span>
+          </Link>
           {/* Divider: tools on the left, the commercial/account links on the right. */}
           <span aria-hidden="true" className="h-4 w-px bg-rule-strong/40" />
           <Link
             href="/pricing"
             onClick={resetIfSamePage("/pricing")}
             aria-current={pathname === "/pricing" ? "page" : undefined}
-            className={`transition-colors hover:text-ochre ${
-              pathname === "/pricing"
-                ? "text-ochre underline decoration-2 underline-offset-[6px]"
-                : ""
+            className={`inline-flex items-center gap-1.5 transition-colors hover:text-ochre ${
+              pathname === "/pricing" ? "text-ochre" : ""
             }`}
           >
-            Pricing
+            <ToolIcon>
+              <rect x="2" y="5" width="20" height="14" rx="2" />
+              <path d="M2 10h20" />
+              <path d="M6 15h4" />
+            </ToolIcon>
+            <span
+              className={
+                pathname === "/pricing"
+                  ? "underline decoration-2 underline-offset-[6px]"
+                  : undefined
+              }
+            >
+              Pricing
+            </span>
           </Link>
           <ThemeToggle />
           <AccountControl />

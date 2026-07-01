@@ -23,10 +23,7 @@ export default function FaqPage() {
       />
       <JsonLd
         id="ld-faq"
-        data={faqPageSchema([
-          ...messages[DEFAULT_LOCALE].faq.items,
-          ...messages[DEFAULT_LOCALE].faq.converterFaq,
-        ])}
+        data={faqPageSchema(messages[DEFAULT_LOCALE].faq.items)}
       />
       <FaqContent />
     </>

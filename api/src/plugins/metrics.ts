@@ -19,6 +19,10 @@ declare module 'fastify' {
       ipBansTotal: Counter;
       httpRequestsByUaClassTotal: Counter;
       quotaExceededTotal: Counter;
+      downloadBytesTotal: Counter;
+      apiCreditsChargedTotal: Counter;
+      playlistJobsTotal: Counter;
+      playlistVideosTotal: Counter;
     };
   }
 }
@@ -161,6 +165,42 @@ async function metrics(fastify: FastifyInstance) {
     registers: [registry],
   });
 
+  // Bytes pulled from YouTube by yt-dlp on the download path. This equals the
+  // egress through YT_DLP_PROXY when a proxy is configured, so it is the number
+  // to watch (summed as GB/month) when sizing an ISP proxy pool. R2 cache hits
+  // never pull from YouTube, so they are correctly not counted here.
+  const downloadBytesTotal = new Counter({
+    name: 'youtube_download_bytes_total',
+    help: 'Bytes of media downloaded from YouTube via yt-dlp; approximates proxy egress when YT_DLP_PROXY is set',
+    labelNames: ['quality', 'tier'] as const,
+    registers: [registry],
+  });
+
+  // Credits billed for successful public /api/v1 requests, by endpoint. Per-endpoint
+  // request/status counts come from httpRequestsTotal (the onResponse hook), so this
+  // tracks only the revenue-relevant credit burn.
+  const apiCreditsChargedTotal = new Counter({
+    name: 'api_credits_charged_total',
+    help: 'Credits charged for successful public /api/v1 requests by endpoint',
+    labelNames: ['endpoint'] as const,
+    registers: [registry],
+  });
+
+  // Playlist batch tools: job lifecycle transitions and per-video processing results.
+  const playlistJobsTotal = new Counter({
+    name: 'youtube_playlist_jobs_total',
+    help: 'Playlist batch jobs by status transition (queued/completed/canceled/failed)',
+    labelNames: ['status'] as const,
+    registers: [registry],
+  });
+
+  const playlistVideosTotal = new Counter({
+    name: 'youtube_playlist_videos_total',
+    help: 'Videos processed by the playlist worker, by result (done/failed/skipped)',
+    labelNames: ['result'] as const,
+    registers: [registry],
+  });
+
   // Business metrics
   const storeRevenue = new Gauge({
     name: 'store_revenue_cents',
@@ -249,6 +289,10 @@ async function metrics(fastify: FastifyInstance) {
     ipBansTotal,
     httpRequestsByUaClassTotal,
     quotaExceededTotal,
+    downloadBytesTotal,
+    apiCreditsChargedTotal,
+    playlistJobsTotal,
+    playlistVideosTotal,
   });
 
   const metricsPort = Number(process.env.METRICS_PORT ?? 9091);

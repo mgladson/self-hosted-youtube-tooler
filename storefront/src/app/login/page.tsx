@@ -4,7 +4,7 @@ import { buildMetadata } from "@/lib/seo";
 
 export const metadata: Metadata = buildMetadata({
   title: "Sign in",
-  description: "Sign in to download videos and manage your plan.",
+  description: "Sign in to manage your plan.",
   path: "/login",
   noIndex: true,
 });

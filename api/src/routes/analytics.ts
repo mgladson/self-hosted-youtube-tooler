@@ -553,6 +553,111 @@ export async function analyticsRoutes(fastify: FastifyInstance) {
     },
   );
 
+  // Supporter (Pro) subscription health for the churn view. Current state comes
+  // from the subscriptions table (one row per email); activations/cancellations
+  // over the window come from the append-only audit_logs event history
+  // (resource_type='subscription', action 'payment_success'/'delete').
+  // MRR is an ESTIMATE: the dollar amount lives in Stripe, not locally, so we
+  // multiply the active count by the configured monthly price.
+  const ASSUMED_MONTHLY_PRICE_USD = 10;
+
+  fastify.get<{ Querystring: { start?: string; end?: string } }>(
+    '/api/analytics/subscriptions',
+    async (request, reply) => {
+      const user = request.session?.user;
+      if (!user || user.role !== 'admin' || !meetsMinTier(user.adminTier, 'viewer')) {
+        return reply.status(403).send({ error: 'Forbidden' });
+      }
+
+      const { start, end } = request.query;
+      if (!start || !end) {
+        return reply.status(400).send({ error: 'start and end query params required' });
+      }
+      const startDate = new Date(start);
+      const endDate = new Date(end);
+      if (isNaN(startDate.getTime()) || isNaN(endDate.getTime())) {
+        return reply.status(400).send({ error: 'Invalid date format' });
+      }
+
+      const rangeDays = Math.ceil((endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24));
+      const bucket = rangeDays <= 60 ? 'day' : 'week';
+
+      const [current, periodTotals, timeline, recent] = await Promise.all([
+        // Current snapshot. "Active" mirrors computeIsPro: a paid period that has
+        // not lapsed, including past_due (Stripe dunning) which still has access.
+        fastify.pg.query(
+          `SELECT
+             COUNT(*) FILTER (WHERE plan = 'pro' AND status IN ('active','past_due') AND current_period_end > NOW()) AS active,
+             COUNT(*) FILTER (WHERE plan = 'pro' AND status = 'past_due' AND current_period_end > NOW()) AS past_due,
+             AVG(EXTRACT(EPOCH FROM (updated_at - created_at))) FILTER (WHERE status = 'canceled') AS avg_tenure_seconds
+           FROM subscriptions`,
+        ),
+        fastify.pg.query(
+          `SELECT
+             COUNT(*) FILTER (WHERE action = 'payment_success') AS new_subs,
+             COUNT(*) FILTER (WHERE action = 'delete') AS canceled
+           FROM audit_logs
+           WHERE resource_type = 'subscription'
+             AND created_at BETWEEN $1 AND $2`,
+          [startDate, endDate],
+        ),
+        fastify.pg.query(
+          `SELECT date_trunc($3, created_at) AS bucket,
+                  COUNT(*) FILTER (WHERE action = 'payment_success') AS new_subs,
+                  COUNT(*) FILTER (WHERE action = 'delete') AS canceled
+           FROM audit_logs
+           WHERE resource_type = 'subscription'
+             AND action IN ('payment_success','delete')
+             AND created_at BETWEEN $1 AND $2
+           GROUP BY bucket ORDER BY bucket`,
+          [startDate, endDate, bucket],
+        ),
+        fastify.pg.query(
+          `SELECT user_email, created_at
+           FROM audit_logs
+           WHERE resource_type = 'subscription' AND action = 'delete'
+           ORDER BY id DESC
+           LIMIT 20`,
+        ),
+      ]);
+
+      const c = current.rows[0] || {};
+      const active = parseInt(c.active || '0', 10);
+      const pastDue = parseInt(c.past_due || '0', 10);
+      const avgTenureSeconds = c.avg_tenure_seconds != null ? parseFloat(c.avg_tenure_seconds) : null;
+
+      const pt = periodTotals.rows[0] || {};
+      const newInPeriod = parseInt(pt.new_subs || '0', 10);
+      const canceledInPeriod = parseInt(pt.canceled || '0', 10);
+
+      // Approximate churn: cancellations in the window as a share of everyone who
+      // was a Supporter across it (active now + those who left).
+      const churnDenom = active + canceledInPeriod;
+      const churnRatePct = churnDenom > 0 ? (canceledInPeriod / churnDenom) * 100 : 0;
+
+      return reply.send({
+        summary: {
+          activeSubscribers: active,
+          pastDue,
+          estMrrUsd: active * ASSUMED_MONTHLY_PRICE_USD,
+          newInPeriod,
+          canceledInPeriod,
+          churnRatePct: Math.round(churnRatePct * 10) / 10,
+          avgTenureDays: avgTenureSeconds != null ? Math.round(avgTenureSeconds / 86400) : null,
+        },
+        timeline: timeline.rows.map((r) => ({
+          bucket: r.bucket,
+          newSubs: parseInt(r.new_subs, 10),
+          canceled: parseInt(r.canceled, 10),
+        })),
+        recentCancellations: recent.rows.map((r) => ({
+          email: r.user_email,
+          canceledAt: r.created_at,
+        })),
+      });
+    },
+  );
+
   // === Consent Record (GDPR) ===
   const CONSENT_RL_KEY_PREFIX = 'consent:rl:';
   const CONSENT_RL_MAX = 10;

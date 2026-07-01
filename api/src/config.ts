@@ -117,6 +117,13 @@ export const config = {
     taxEnabled: process.env.STRIPE_TAX_ENABLED === 'true',
     priceProMonthly: process.env.STRIPE_PRICE_PRO_MONTHLY || '',
     priceProAnnual: process.env.STRIPE_PRICE_PRO_ANNUAL || '',
+    // One-time price for a developer API credit pack (mode: payment checkout).
+    priceCreditPack: process.env.STRIPE_PRICE_CREDIT_PACK || '',
+  },
+  // API credits sold as one-time packs: `packSize` credits are granted per successful
+  // purchase of the STRIPE_PRICE_CREDIT_PACK price.
+  credits: {
+    packSize: parseInt(process.env.CREDIT_PACK_SIZE || '1000', 10),
   },
   // Cloudflare R2 (S3-compatible) cache for merged YouTube downloads. Optional:
   // when unset the API streams downloads directly (no cache). R2's zero egress
@@ -129,6 +136,16 @@ export const config = {
     accessKey: process.env.R2_ACCESS_KEY_ID || '',
     secretKey: process.env.R2_SECRET_ACCESS_KEY || '',
     bucket: process.env.R2_BUCKET || '',
+  },
+  // Playlist batch tools (Supporter-only). Default OFF so a code deploy never exposes
+  // the routes before the playlist_jobs migration is applied; enable explicitly in prod.
+  // maxVideos bounds enumeration and per-job work; the delay/concurrency knobs are used
+  // by the background worker (added in a later slice).
+  playlist: {
+    enabled: process.env.PLAYLIST_ENABLED === 'true',
+    maxVideos: parseInt(process.env.PLAYLIST_MAX_VIDEOS || '50', 10),
+    perVideoDelayMs: parseInt(process.env.PLAYLIST_PER_VIDEO_DELAY_MS || '1500', 10),
+    maxConcurrentJobs: parseInt(process.env.PLAYLIST_MAX_CONCURRENT_JOBS || '1', 10),
   },
   baseUrl: process.env.BASE_URL || 'http://localhost',
   nodeEnv,

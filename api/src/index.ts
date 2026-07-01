@@ -11,6 +11,9 @@ import { mailerPlugin } from './plugins/mailer.js';
 import { sessionPlugin } from './plugins/session.js';
 import { authGuardPlugin } from './plugins/auth-guard.js';
 import { botDetectorPlugin } from './plugins/bot-detector.js';
+import { errorLoggerPlugin } from './plugins/error-logger.js';
+import { apiAuthPlugin } from './plugins/api-auth.js';
+import { playlistWorkerPlugin } from './plugins/playlist-worker.js';
 import { healthRoutes } from './routes/health.js';
 import { emailRoutes } from './routes/email.js';
 import { authRoutes } from './routes/auth.js';
@@ -34,8 +37,11 @@ import { customerLeadsRoutes } from './routes/customer-leads.js';
 import { reviewRoutes } from './routes/reviews.js';
 import { adsRoutes } from './routes/ads.js';
 import { adminSyncRoutes } from './routes/admin-sync.js';
+import { adminErrorRoutes } from './routes/admin-errors.js';
 import { youtubeRoutes } from './routes/youtube.js';
 import { billingRoutes } from './routes/billing.js';
+import { developerRoutes } from './routes/developer.js';
+import { v1Routes } from './routes/v1.js';
 import { runMigrations } from './migrate.js';
 
 export function buildApp() {
@@ -130,6 +136,9 @@ export function buildApp() {
   app.register(sanctionsPlugin);
   app.register(authGuardPlugin);
   app.register(botDetectorPlugin);
+  app.register(errorLoggerPlugin);
+  app.register(apiAuthPlugin);
+  app.register(playlistWorkerPlugin);
   app.register(healthRoutes);
   app.register(emailRoutes);
   app.register(authRoutes);
@@ -151,8 +160,11 @@ export function buildApp() {
   app.register(reviewRoutes);
   app.register(adsRoutes);
   app.register(adminSyncRoutes);
+  app.register(adminErrorRoutes);
   app.register(youtubeRoutes);
   app.register(billingRoutes);
+  app.register(developerRoutes);
+  app.register(v1Routes);
 
   // AML-3 / PAY-4: refuse to start if compliance-critical tables are missing.
   // These tables back velocity_flag / sanctions_block / discount-rollback paths;

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useMemo, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
 import {
   ToolErrorNotice,
   toToolError,
@@ -440,10 +440,9 @@ export function YouTubeToolContent() {
   const [view, setView] = useState<"plain" | "timestamped">("plain");
   const [copiedTx, setCopiedTx] = useState(false);
 
-  const onSubmit = useCallback(
-    async (e: FormEvent) => {
-      e.preventDefault();
-      const value = url.trim();
+  const runExtract = useCallback(
+    async (rawValue: string) => {
+      const value = rawValue.trim();
       if (!value || loading) return;
       setLoading(true);
       setError(null);
@@ -491,8 +490,29 @@ export function YouTubeToolContent() {
         setLoading(false);
       }
     },
-    [url, loading],
+    [loading],
   );
+
+  const onSubmit = useCallback(
+    (e: FormEvent) => {
+      e.preventDefault();
+      void runExtract(url);
+    },
+    [runExtract, url],
+  );
+
+  // Deep-link support: /?url=<video> auto-extracts on load, so links from the playlist
+  // tool (and shareable links) land on a populated Overview. Reads window.location
+  // rather than useSearchParams to avoid a Suspense-boundary requirement.
+  useEffect(() => {
+    const q = new URLSearchParams(window.location.search).get("url");
+    if (q) {
+      setUrl(q);
+      void runExtract(q);
+    }
+    // Run once on mount for the initial deep-link only.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // ---- Thumbnail helpers -------------------------------------------------
   const markUnavailable = useCallback((key: string) => {
@@ -773,8 +793,8 @@ export function YouTubeToolContent() {
 
   return (
     <PageShell
-      title="YouTube Transcript, Downloader & Thumbnail Tools"
-      intro="Paste one YouTube link to pull everything at once: the full transcript, video and audio downloads, every thumbnail size, and the video's tags and keyword ideas. It is free, runs in your browser, and needs no account."
+      title="YouTube Transcript, Thumbnail & Metadata Tools"
+      intro="Paste one YouTube link to pull everything at once: the full transcript, every thumbnail size, the video's tags and keyword ideas, plus optional video and audio export. It is free, runs in your browser, and needs no account."
       wide
       toolTabs
       compact={!!result}

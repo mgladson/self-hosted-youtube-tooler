@@ -7,6 +7,7 @@ import { meetsMinTier } from '../plugins/auth-guard.js';
 import { getClientIp } from '../lib/client-ip.js';
 import { removeSubscriber } from './newsletter.js';
 import { handleStripeSubscriptionEvent } from '../lib/subscriptions.js';
+import { grantTopup } from '../lib/credits.js';
 
 type CartItem = {
   productId: string;
@@ -896,6 +897,50 @@ export async function checkoutRoutes(fastify: FastifyInstance) {
               instance.log.error({ orderId: order.id, eventType: event.type },
                 'Dispute event missing string id — degraded audit row written with sentinel');
             }
+          }
+        }
+      }
+
+      // API credit-pack top-up: a one-time Checkout (mode: payment) tagged kind=credits.
+      // Guarded so it never touches the subscription checkout (mode: subscription), which
+      // handleStripeSubscriptionEvent owns. Credits are granted only once the payment has
+      // actually SETTLED: synchronous methods (card/wallet) settle by 'completed' with
+      // payment_status 'paid', while delayed methods (ACH/SEPA/Boleto/etc.) report 'unpaid'
+      // at 'completed' and settle later via async_payment_succeeded. Granting on 'completed'
+      // alone would mint paid credits for a payment that can still fail, with no clawback.
+      // grantTopup is idempotent on the session id, so if both events fire (or Stripe retries
+      // after an audit-write failure) credits are granted exactly once. Same ordering rule:
+      // mutation + audit commit here, before markEventProcessed() claims the dedup key.
+      if (
+        event.type === 'checkout.session.completed' ||
+        event.type === 'checkout.session.async_payment_succeeded'
+      ) {
+        const session = event.data.object;
+        if (
+          session.mode === 'payment' &&
+          session.metadata?.kind === 'credits' &&
+          session.payment_status === 'paid'
+        ) {
+          const email = (
+            session.metadata?.email ||
+            session.customer_details?.email ||
+            session.customer_email ||
+            ''
+          ).toLowerCase();
+          const credits = parseInt(session.metadata?.credits || '0', 10);
+          if (email && credits > 0) {
+            const { balance, applied } = await grantTopup(instance, email, credits, session.id);
+            await writeAuditLog(instance, {
+              userEmail: email,
+              userName: email,
+              action: 'payment_success',
+              resourceType: 'credit_account',
+              resourceId: email,
+              summary: `Purchased ${credits} API credits (${session.id})`,
+              newState: { credits, balance, applied },
+            });
+          } else {
+            instance.log.warn({ eventId: event.id }, 'credit checkout missing email/credits');
           }
         }
       }

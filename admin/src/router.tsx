@@ -27,12 +27,15 @@ import { ReportsHub } from '@/pages/reports/ReportsHub';
 import { FinanceReports } from '@/pages/reports/FinanceReports';
 import { TaxReports } from '@/pages/reports/TaxReports';
 import { UserInsights } from '@/pages/UserInsights';
+import { Subscriptions } from '@/pages/Subscriptions';
 import { SupportTickets } from '@/pages/SupportTickets';
 import { SupportTicketDetail } from '@/pages/SupportTicketDetail';
 import { Newsletter } from '@/pages/Newsletter';
 import { CustomerLeads } from '@/pages/CustomerLeads';
 import { AuditLog } from '@/pages/AuditLog';
 import { Security } from '@/pages/Security';
+import { Technical } from '@/pages/Technical';
+import { TechnicalDetail } from '@/pages/TechnicalDetail';
 import { Ads } from '@/pages/Ads';
 import { Invoices } from '@/pages/Invoices';
 import { InvoiceEditor } from '@/pages/InvoiceEditor';
@@ -77,6 +80,7 @@ export const router = createBrowserRouter([
       { path: 'reviews', element: <Reviews /> },
       { path: 'ads', element: <Ads /> },
       { path: 'insights', element: <UserInsights /> },
+      { path: 'subscriptions', element: <Subscriptions /> },
       { path: 'reports', element: <ReportsHub /> },
       { path: 'reports/finance', element: <FinanceReports /> },
       { path: 'reports/tax', element: <TaxReports /> },
@@ -86,6 +90,8 @@ export const router = createBrowserRouter([
       { path: 'customer-leads', element: <CustomerLeads /> },
       { path: 'audit-log', element: <AuditLog /> },
       { path: 'security', element: <Security /> },
+      { path: 'technical', element: <Technical /> },
+      { path: 'technical/:fingerprint', element: <TechnicalDetail /> },
       { path: 'settings', element: <SettingsPage /> },
     ],
   },

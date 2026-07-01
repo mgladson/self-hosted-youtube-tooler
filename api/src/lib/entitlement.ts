@@ -89,28 +89,47 @@ export async function resolveEntitlement(
   if (!email) {
     return { identity: getClientIp(request), email: null, loggedIn: false, isPro: false, tier: 'free' };
   }
+  return resolveEntitlementByEmail(fastify, email);
+}
 
-  let isPro = false;
+// Determine whether an email is Pro WITHOUT failing open. Returns true/false when
+// known, or null when the lookup itself could not be completed (a Valkey/PG error).
+// Callers that must not treat an infra blip as "free" (e.g. the playlist worker, which
+// would otherwise permanently truncate a paid job) can distinguish the null and retry.
+export async function isProByEmail(
+  fastify: FastifyInstance,
+  email: string,
+): Promise<boolean | null> {
+  const lower = email.toLowerCase();
   try {
-    const cacheKey = PLAN_CACHE_PREFIX + email;
+    const cacheKey = PLAN_CACHE_PREFIX + lower;
     const cached = await fastify.valkey.get(cacheKey);
-    if (cached !== null) {
-      isPro = cached === 'pro';
-    } else {
-      const res = await fastify.pg.query<{
-        plan: string;
-        status: string | null;
-        current_period_end: string | null;
-      }>('SELECT plan, status, current_period_end FROM subscriptions WHERE email = $1', [email]);
-      isPro = computeIsPro(res.rows[0] ?? null, new Date());
-      await fastify.valkey.set(cacheKey, isPro ? 'pro' : 'free', 'EX', PLAN_CACHE_TTL_S);
-    }
+    if (cached !== null) return cached === 'pro';
+    const res = await fastify.pg.query<{
+      plan: string;
+      status: string | null;
+      current_period_end: string | null;
+    }>('SELECT plan, status, current_period_end FROM subscriptions WHERE email = $1', [lower]);
+    const isPro = computeIsPro(res.rows[0] ?? null, new Date());
+    await fastify.valkey.set(cacheKey, isPro ? 'pro' : 'free', 'EX', PLAN_CACHE_TTL_S);
+    return isPro;
   } catch (err) {
-    fastify.log.warn({ err }, 'entitlement lookup failed — defaulting to free');
-    isPro = false;
+    fastify.log.warn({ err }, 'entitlement lookup failed');
+    return null;
   }
+}
 
-  return { identity: email, email, loggedIn: true, isPro, tier: isPro ? 'pro' : 'free' };
+// Resolve entitlement for a known email with no request in hand, used by the request
+// path via resolveEntitlement. Fails OPEN to free on a lookup error (harmless there:
+// a logged-in user briefly degraded to free limits). The playlist worker deliberately
+// uses isProByEmail instead so a transient error does not read as "not entitled".
+export async function resolveEntitlementByEmail(
+  fastify: FastifyInstance,
+  email: string,
+): Promise<Entitlement> {
+  const lower = email.toLowerCase();
+  const isPro = (await isProByEmail(fastify, lower)) === true; // null (error) → free
+  return { identity: lower, email: lower, loggedIn: true, isPro, tier: isPro ? 'pro' : 'free' };
 }
 
 function quotaResult(allowed: boolean, used: number, limit: number, now: Date): QuotaResult {

@@ -4,12 +4,16 @@ import { rm, stat } from 'node:fs/promises';
 import { getClientIp } from '../lib/client-ip.js';
 import {
   canonicalUrl,
+  canonicalPlaylistUrl,
   downloadMedia,
   type DownloadResult,
+  extractPlaylistId,
   extractVideoId,
   extractYouTube,
   getAvailableFormats,
+  getPlaylistEntries,
   getTranscript,
+  mediaKey,
   YouTubeError,
   type YouTubeErrorCode,
   type YouTubeExtractResult,
@@ -58,6 +62,27 @@ function sendError(reply: FastifyReply, err: unknown): FastifyReply {
     return reply.status(statusForCode(err.code)).send({ error: err.message, code: err.code });
   }
   return reply.status(500).send({ error: 'Internal error processing the video.' });
+}
+
+// Persist one row per completed download, best-effort (fire-and-forget so it can
+// never block or fail the response). Lets churn analysis later join a subscriber's
+// download behavior against the activate/cancel timeline in the audit log.
+// Anonymous downloads carry a null email and simply won't join to a subscriber.
+function recordDownloadEvent(
+  fastify: FastifyInstance,
+  email: string | null,
+  videoId: string,
+  quality: string,
+  tier: string,
+  bytes: number,
+): void {
+  fastify.pg
+    .query(
+      `INSERT INTO download_events (email, video_id, quality, tier, bytes)
+       VALUES ($1, $2, $3, $4, $5)`,
+      [email, videoId, quality, tier, bytes],
+    )
+    .catch((err) => fastify.log.warn({ err }, 'download_events insert failed'));
 }
 
 export async function youtubeRoutes(fastify: FastifyInstance) {
@@ -266,11 +291,13 @@ export async function youtubeRoutes(fastify: FastifyInstance) {
       if (!input) {
         return reply.status(400).send({ error: 'The "url" query parameter is required.' });
       }
-      const videoId = extractVideoId(input);
-      if (!videoId) {
-        return reply.status(400).send({ error: 'Not a valid YouTube URL or video id.' });
+      let idKey: string;
+      try {
+        idKey = mediaKey(input);
+      } catch (err) {
+        return sendError(reply, err);
       }
-      const cacheKey = FORMATS_CACHE_PREFIX + videoId;
+      const cacheKey = FORMATS_CACHE_PREFIX + idKey;
       try {
         const cached = await fastify.valkey.get(cacheKey);
         if (cached) {
@@ -283,7 +310,7 @@ export async function youtubeRoutes(fastify: FastifyInstance) {
       }
 
       const ent = await resolveEntitlement(fastify, request);
-      const quota = await chargeLookupQuota(fastify, ent, videoId);
+      const quota = await chargeLookupQuota(fastify, ent, idKey);
       if (!quota.allowed) {
         fastify.metrics.quotaExceededTotal.inc({ tier: ent.tier, feature: 'lookup' });
         reply.header('Retry-After', String(quota.retryAfter));
@@ -336,9 +363,11 @@ export async function youtubeRoutes(fastify: FastifyInstance) {
       if (!DL_QUALITIES.has(quality)) {
         return reply.status(400).send({ error: 'Invalid or missing "quality".' });
       }
-      const videoId = extractVideoId(input);
-      if (!videoId) {
-        return reply.status(400).send({ error: 'Not a valid YouTube URL or video id.' });
+      let idKey: string;
+      try {
+        idKey = mediaKey(input);
+      } catch (err) {
+        return sendError(reply, err);
       }
 
       // Downloads are the expensive path: basic quality (audio + up to 720p) is free
@@ -415,13 +444,13 @@ export async function youtubeRoutes(fastify: FastifyInstance) {
         const ext = quality === 'audio' ? 'mp3' : 'mp4';
         const r2ContentType = quality === 'audio' ? 'audio/mpeg' : 'video/mp4';
         const bucket = config.r2.bucket;
-        const key = `yt/${videoId}/${quality}.${ext}`;
+        const key = `yt/${idKey.replace(/^yt:/, '').replace(/:/g, '/')}/${quality}.${ext}`;
 
         // Cache hit: a stored copy still inside the 24h freshness window.
         try {
           const st = await r2.statObject(bucket, key);
           if (Date.now() - st.lastModified.getTime() <= R2_CACHE_TTL_MS) {
-            const name = (st.metaData as Record<string, string>)['filename'] || `${videoId}.${ext}`;
+            const name = (st.metaData as Record<string, string>)['filename'] || `${idKey.replace(/^yt:/, '').replace(/[^a-zA-Z0-9._-]/g, '_')}.${ext}`;
             const url = await r2.presignedGetObject(bucket, key, R2_PRESIGN_TTL_S, {
               'response-content-disposition': `attachment; filename="${name}"`,
             });
@@ -441,6 +470,11 @@ export async function youtubeRoutes(fastify: FastifyInstance) {
           );
           return sendError(reply, err);
         }
+
+        // Bytes pulled from YouTube = the proxy egress for this download. A
+        // cache hit returns earlier, so only real yt-dlp pulls are counted.
+        fastify.metrics.downloadBytesTotal.inc({ quality, tier: ent.tier }, media.bytes);
+        recordDownloadEvent(fastify, ent.email, idKey, quality, ent.tier, media.bytes);
 
         try {
           await r2.fPutObject(bucket, key, media.filePath, {
@@ -470,7 +504,362 @@ export async function youtubeRoutes(fastify: FastifyInstance) {
         );
         return sendError(reply, err);
       }
+      fastify.metrics.downloadBytesTotal.inc({ quality, tier: ent.tier }, media.bytes);
+      recordDownloadEvent(fastify, ent.email, idKey, quality, ent.tier, media.bytes);
       return streamTemp(media);
     },
   );
+
+  // Playlist enumeration — the free preview / teaser. One cheap --flat-playlist call,
+  // cached briefly (playlists mutate, so far shorter than the 30d video cache). The
+  // batch job that processes this list is Supporter-only (a later slice); the preview
+  // itself is free, mirroring the single-video lookups.
+  const PLAYLIST_ENUM_PREFIX = 'youtube:playlist:enum:';
+  const PLAYLIST_ENUM_TTL_S = 60 * 60 * 6; // 6 hours
+
+  fastify.get<{ Querystring: { url?: string } }>(
+    '/api/youtube/playlist/preview',
+    async (request, reply) => {
+      if (!config.playlist.enabled) {
+        return reply
+          .status(404)
+          .send({ error: 'Playlist support is not enabled.', code: 'feature_disabled' });
+      }
+      const input = (request.query.url || '').trim();
+      if (!input) {
+        return reply.status(400).send({ error: 'The "url" query parameter is required.' });
+      }
+      const playlistId = extractPlaylistId(input);
+      if (!playlistId) {
+        return reply.status(400).send({ error: 'Not a valid YouTube playlist URL or id.' });
+      }
+
+      const cacheKey = PLAYLIST_ENUM_PREFIX + playlistId;
+
+      // 1) Cache hit → serve instantly, no YouTube traffic, no rate limiting.
+      try {
+        const cached = await fastify.valkey.get(cacheKey);
+        if (cached) {
+          reply.header('X-Cache', 'HIT');
+          reply.header('Cache-Control', 'public, max-age=3600');
+          return reply.send(JSON.parse(cached));
+        }
+      } catch (err) {
+        fastify.log.warn({ err }, 'youtube playlist cache read failed');
+      }
+
+      // 2) Cache miss → throttle per client IP (this request hits YouTube).
+      try {
+        const rlKey = RATE_PREFIX + getClientIp(request);
+        const count = await fastify.valkey.incr(rlKey);
+        if (count === 1) await fastify.valkey.expire(rlKey, RATE_WINDOW_S);
+        if (count > RATE_LIMIT) {
+          reply.header('Retry-After', String(RATE_WINDOW_S));
+          return reply.status(429).send({
+            error: 'Too many new lookups from your network. Wait a minute and try again.',
+            code: 'rate_limited',
+          });
+        }
+      } catch (err) {
+        fastify.log.warn({ err }, 'youtube playlist rate-limit check failed');
+      }
+
+      // One lookup quota (enumeration is a single cheap call), keyed on the playlist so
+      // repeat previews of the same list dedup to one charge per day.
+      const ent = await resolveEntitlement(fastify, request);
+      const quota = await chargeLookupQuota(fastify, ent, `pl:${playlistId}`);
+      if (!quota.allowed) {
+        fastify.metrics.quotaExceededTotal.inc({ tier: ent.tier, feature: 'lookup' });
+        reply.header('Retry-After', String(quota.retryAfter));
+        return reply.status(429).send({
+          error: "You've reached today's free limit — upgrade to the Paid plan for more.",
+          code: 'quota_exceeded',
+          used: quota.used,
+          limit: quota.limit,
+          resetAt: quota.resetAt,
+          upgrade: true,
+        });
+      }
+
+      // 3) Enumerate (bounded by maxVideos at the yt-dlp level), then cache.
+      try {
+        const enumeration = await getPlaylistEntries(playlistId, {
+          maxVideos: config.playlist.maxVideos,
+        });
+        const totalDuration = enumeration.entries.reduce(
+          (sum, e) => sum + (e.duration ?? 0),
+          0,
+        );
+        const result = {
+          ...enumeration,
+          cappedCount: enumeration.entries.length,
+          totalDuration,
+        };
+        try {
+          await fastify.valkey.set(cacheKey, JSON.stringify(result), 'EX', PLAYLIST_ENUM_TTL_S);
+        } catch (err) {
+          fastify.log.warn({ err }, 'youtube playlist cache write failed');
+        }
+        reply.header('X-Cache', 'MISS');
+        reply.header('Cache-Control', 'public, max-age=3600');
+        return reply.send(result);
+      } catch (err) {
+        fastify.log.warn(
+          { err: err instanceof Error ? err.message : err, playlistId },
+          'youtube playlist enumeration failed',
+        );
+        return sendError(reply, err);
+      }
+    },
+  );
+
+  // ---- Playlist batch jobs (Supporter-only): create + track the background job that
+  // warms every video's cache. The free preview above is the teaser. ----
+  const PLAYLIST_JOB_ID_RE =
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+  fastify.post<{ Body: { url?: string } }>(
+    '/api/youtube/playlist/jobs',
+    async (request, reply) => {
+      if (!config.playlist.enabled) {
+        return reply
+          .status(404)
+          .send({ error: 'Playlist support is not enabled.', code: 'feature_disabled' });
+      }
+      const ent = await resolveEntitlement(fastify, request);
+      if (!ent.isPro || !ent.email) {
+        return reply.status(402).send({
+          error: 'Playlist processing is a Supporter feature. Upgrade to run it.',
+          code: 'upgrade_required',
+          upgrade: true,
+        });
+      }
+      const input = (request.body?.url || '').trim();
+      if (!input) {
+        return reply.status(400).send({ error: 'The "url" field is required.' });
+      }
+      const playlistId = extractPlaylistId(input);
+      if (!playlistId) {
+        return reply.status(400).send({ error: 'Not a valid YouTube playlist URL or id.' });
+      }
+
+      // Enumerate (bounded) — the same yt-dlp path the preview uses. Done before the
+      // transaction so a pg connection is not held open across the yt-dlp call.
+      let enumeration;
+      try {
+        enumeration = await getPlaylistEntries(playlistId, {
+          maxVideos: config.playlist.maxVideos,
+        });
+      } catch (err) {
+        return sendError(reply, err);
+      }
+      if (enumeration.entries.length === 0) {
+        return reply
+          .status(422)
+          .send({ error: 'That playlist has no accessible videos.', code: 'empty_playlist' });
+      }
+
+      // Insert the job + one pending item per video, enforcing the per-user active-job
+      // cap ATOMICALLY: a transaction-scoped advisory lock keyed on the email serializes
+      // concurrent submits from the same user, so the count check and the insert cannot
+      // interleave (no check-then-insert race) and the cap fails closed on a DB error.
+      const client = await fastify.pg.connect();
+      let jobId: string;
+      try {
+        await client.query('BEGIN');
+        await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [
+          `playlist_job:${ent.email}`,
+        ]);
+        const active = await client.query<{ count: number }>(
+          `SELECT COUNT(*)::int AS count FROM playlist_jobs
+           WHERE email=$1 AND status IN ('queued','running')`,
+          [ent.email],
+        );
+        if ((active.rows[0]?.count ?? 0) >= config.playlist.maxConcurrentJobs) {
+          await client.query('ROLLBACK');
+          return reply.status(409).send({
+            error: 'You already have a playlist job in progress. Wait for it to finish.',
+            code: 'job_in_progress',
+          });
+        }
+        const jobRes = await client.query<{ id: string }>(
+          `INSERT INTO playlist_jobs (email, playlist_id, playlist_url, title, status, total_videos)
+           VALUES ($1, $2, $3, $4, 'queued', $5) RETURNING id`,
+          [
+            ent.email,
+            playlistId,
+            canonicalPlaylistUrl(playlistId),
+            enumeration.title,
+            enumeration.entries.length,
+          ],
+        );
+        jobId = jobRes.rows[0].id;
+        await client.query(
+          `INSERT INTO playlist_job_items (job_id, position, video_id, title, duration)
+           SELECT $1, p, v, t, d
+           FROM unnest($2::int[], $3::text[], $4::text[], $5::int[]) AS x(p, v, t, d)`,
+          [
+            jobId,
+            enumeration.entries.map((_, i) => i),
+            enumeration.entries.map((e) => e.videoId),
+            enumeration.entries.map((e) => e.title),
+            enumeration.entries.map((e) => e.duration),
+          ],
+        );
+        await client.query('COMMIT');
+      } catch (err) {
+        await client.query('ROLLBACK').catch(() => {});
+        fastify.log.error({ err }, 'playlist job insert failed');
+        return reply.status(500).send({ error: 'Could not create the playlist job.' });
+      } finally {
+        client.release();
+      }
+
+      fastify.metrics.playlistJobsTotal.inc({ status: 'queued' });
+      fastify.playlistWorker.notify();
+
+      return reply.status(202).send({
+        jobId,
+        status: 'queued',
+        total: enumeration.entries.length,
+        totalCount: enumeration.totalCount,
+        capped: enumeration.capped,
+      });
+    },
+  );
+
+  fastify.get<{ Params: { id: string } }>(
+    '/api/youtube/playlist/jobs/:id',
+    async (request, reply) => {
+      if (!config.playlist.enabled) {
+        return reply
+          .status(404)
+          .send({ error: 'Playlist support is not enabled.', code: 'feature_disabled' });
+      }
+      const ent = await resolveEntitlement(fastify, request);
+      if (!ent.email) {
+        return reply.status(401).send({ error: 'Sign in to view playlist jobs.' });
+      }
+      const id = request.params.id;
+      if (!PLAYLIST_JOB_ID_RE.test(id)) {
+        return reply.status(400).send({ error: 'Invalid job id.' });
+      }
+      const jobRes = await fastify.pg.query<{ email: string; [k: string]: unknown }>(
+        `SELECT id, email, playlist_id, title, status, total_videos, completed_videos,
+                failed_videos, partial_reason, created_at, started_at, finished_at
+         FROM playlist_jobs WHERE id=$1`,
+        [id],
+      );
+      const job = jobRes.rows[0];
+      if (!job) {
+        return reply.status(404).send({ error: 'Job not found.' });
+      }
+      if (job.email !== ent.email) {
+        return reply.status(403).send({ error: 'This job belongs to another account.' });
+      }
+      const itemsRes = await fastify.pg.query(
+        `SELECT position, video_id, title, duration, status, error
+         FROM playlist_job_items WHERE job_id=$1 ORDER BY position ASC`,
+        [id],
+      );
+      // Pending items across OTHER active jobs — a rough "how much is ahead of you".
+      // Only meaningful (and only rendered) while this job is still queued, so skip the
+      // JOIN/COUNT once it is running/terminal (this route is polled every 2.5s).
+      let queuePosition = 0;
+      if (job.status === 'queued') {
+        const ahead = await fastify.pg.query<{ count: number }>(
+          `SELECT COUNT(*)::int AS count FROM playlist_job_items i
+           JOIN playlist_jobs j ON j.id=i.job_id
+           WHERE i.status='pending' AND j.status IN ('queued','running') AND j.id <> $1`,
+          [id],
+        );
+        queuePosition = ahead.rows[0]?.count ?? 0;
+      }
+      return reply.send({
+        id: job.id,
+        playlist_id: job.playlist_id,
+        title: job.title,
+        status: job.status,
+        total_videos: job.total_videos,
+        completed_videos: job.completed_videos,
+        failed_videos: job.failed_videos,
+        partial_reason: job.partial_reason,
+        created_at: job.created_at,
+        started_at: job.started_at,
+        finished_at: job.finished_at,
+        queuePosition,
+        items: itemsRes.rows,
+      });
+    },
+  );
+
+  fastify.post<{ Params: { id: string } }>(
+    '/api/youtube/playlist/jobs/:id/cancel',
+    async (request, reply) => {
+      if (!config.playlist.enabled) {
+        return reply
+          .status(404)
+          .send({ error: 'Playlist support is not enabled.', code: 'feature_disabled' });
+      }
+      const ent = await resolveEntitlement(fastify, request);
+      if (!ent.email) {
+        return reply.status(401).send({ error: 'Sign in to manage playlist jobs.' });
+      }
+      const id = request.params.id;
+      if (!PLAYLIST_JOB_ID_RE.test(id)) {
+        return reply.status(400).send({ error: 'Invalid job id.' });
+      }
+      const jobRes = await fastify.pg.query<{ email: string; status: string }>(
+        `SELECT email, status FROM playlist_jobs WHERE id=$1`,
+        [id],
+      );
+      const job = jobRes.rows[0];
+      if (!job) {
+        return reply.status(404).send({ error: 'Job not found.' });
+      }
+      if (job.email !== ent.email) {
+        return reply.status(403).send({ error: 'This job belongs to another account.' });
+      }
+      // Guarded so a job the worker completes between the read above and here is not
+      // clobbered back to 'canceled' (the worker's own transitions all check
+      // status='running'); the metric is only counted when the cancel actually lands.
+      const upd = await fastify.pg.query(
+        `UPDATE playlist_jobs SET status='canceled', finished_at=NOW(), updated_at=NOW()
+         WHERE id=$1 AND status IN ('queued','running')`,
+        [id],
+      );
+      if (!upd.rowCount) {
+        const cur = await fastify.pg.query<{ status: string }>(
+          `SELECT status FROM playlist_jobs WHERE id=$1`,
+          [id],
+        );
+        return reply.send({ status: cur.rows[0]?.status ?? 'canceled' });
+      }
+      await fastify.pg.query(
+        `UPDATE playlist_job_items SET status='skipped' WHERE job_id=$1 AND status='pending'`,
+        [id],
+      );
+      fastify.metrics.playlistJobsTotal.inc({ status: 'canceled' });
+      return reply.send({ status: 'canceled' });
+    },
+  );
+
+  fastify.get('/api/youtube/playlist/jobs', async (request, reply) => {
+    if (!config.playlist.enabled) {
+      return reply
+        .status(404)
+        .send({ error: 'Playlist support is not enabled.', code: 'feature_disabled' });
+    }
+    const ent = await resolveEntitlement(fastify, request);
+    if (!ent.email) {
+      return reply.status(401).send({ error: 'Sign in to view playlist jobs.' });
+    }
+    const res = await fastify.pg.query(
+      `SELECT id, playlist_id, title, status, total_videos, completed_videos, failed_videos,
+              partial_reason, created_at, finished_at
+       FROM playlist_jobs WHERE email=$1 ORDER BY created_at DESC LIMIT 20`,
+      [ent.email],
+    );
+    return reply.send({ jobs: res.rows });
+  });
 }

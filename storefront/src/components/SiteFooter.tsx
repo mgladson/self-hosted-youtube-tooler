@@ -8,11 +8,13 @@ const TOOL_LINKS = [
   { href: "/tags", label: "Tags" },
   { href: "/download", label: "Video & Audio" },
   { href: "/transcript", label: "Transcript" },
+  { href: "/playlist", label: "Playlist" },
 ];
 
 const RESOURCE_LINKS = [
   { href: "/pricing", label: "Pricing" },
   { href: "/faq", label: "FAQ" },
+  { href: "/api-docs", label: "API Docs" },
   { href: "/useful-links", label: "Useful Links" },
 ];
 
@@ -59,7 +61,7 @@ export function SiteFooter() {
               Your Site
             </p>
             <p className="mt-2 font-display text-[14px] italic text-ink-soft">
-              By youtubers, for youtubers
+              By content creators, for content creators
             </p>
           </div>
           {/* Non-affiliation disclaimer, its own column with an eyebrow header. */}

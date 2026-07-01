@@ -82,6 +82,32 @@ export async function fetchDeviceAnalytics(start: string, end: string, path?: st
   return res.json();
 }
 
+export type SubscriptionAnalytics = {
+  summary: {
+    activeSubscribers: number;
+    pastDue: number;
+    estMrrUsd: number;
+    newInPeriod: number;
+    canceledInPeriod: number;
+    churnRatePct: number;
+    avgTenureDays: number | null;
+  };
+  timeline: { bucket: string; newSubs: number; canceled: number }[];
+  recentCancellations: { email: string; canceledAt: string }[];
+};
+
+export async function fetchSubscriptionAnalytics(
+  start: string,
+  end: string,
+): Promise<SubscriptionAnalytics> {
+  const res = await fetch(
+    `${API_BASE}/analytics/subscriptions?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`,
+    { credentials: 'include' },
+  );
+  if (!res.ok) throw new Error(`Subscription analytics fetch failed: ${res.status}`);
+  return res.json();
+}
+
 export type BannerData = {
   active: boolean;
   text: string;
@@ -1102,4 +1128,147 @@ export async function deleteBlogPost(slug: string): Promise<void> {
     credentials: 'include',
   });
   if (!res.ok) throw new Error(`Delete blog post failed: ${res.status}`);
+}
+
+// ============================================================
+// Technical — error triage (captured 5xx from the web feature sets)
+// ============================================================
+export type ErrorGroupStatus = 'open' | 'resolved' | 'ignored';
+export type ErrorSort = 'count' | 'bytes' | 'last_seen';
+export type ErrorStatusFilter = 'all' | ErrorGroupStatus;
+
+export type ErrorGroup = {
+  fingerprint: string;
+  count: number;
+  totalBytes: number;
+  lastSeen: string;
+  firstSeen: string;
+  statusCode: number;
+  route: string;
+  code: string | null;
+  sampleMessage: string;
+  status: ErrorGroupStatus;
+  note: string | null;
+};
+
+export type ErrorGroupsResponse = {
+  groups: ErrorGroup[];
+  total: number;
+  page: number;
+  pageSize: number;
+  totalPages: number;
+};
+
+export type ErrorSample = {
+  id: string;
+  method: string;
+  route: string;
+  statusCode: number;
+  code: string | null;
+  message: string;
+  stack: string | null;
+  requestId: string | null;
+  ip: string | null;
+  userEmail: string | null;
+  bytes: number;
+  context: Record<string, unknown> | null;
+  createdAt: string;
+};
+
+export type ErrorGroupDetail = {
+  group: ErrorGroup;
+  samples: ErrorSample[];
+};
+
+export type ErrorSummary = {
+  totalEvents: number;
+  events24h: number;
+  openGroups: number;
+  retentionDays: number;
+};
+
+export async function fetchErrorGroups(
+  opts: {
+    page?: number;
+    sort?: ErrorSort;
+    status?: ErrorStatusFilter;
+    route?: string;
+    code?: string;
+    q?: string;
+  } = {},
+): Promise<ErrorGroupsResponse> {
+  const params = new URLSearchParams();
+  if (opts.page) params.set('page', String(opts.page));
+  if (opts.sort) params.set('sort', opts.sort);
+  if (opts.status && opts.status !== 'all') params.set('status', opts.status);
+  if (opts.route) params.set('route', opts.route);
+  if (opts.code) params.set('code', opts.code);
+  if (opts.q) params.set('q', opts.q);
+  const res = await fetch(`${API_BASE}/admin/errors?${params}`, { credentials: 'include' });
+  if (!res.ok) throw new Error(`Error groups fetch failed: ${res.status}`);
+  return res.json();
+}
+
+export async function fetchErrorSummary(): Promise<ErrorSummary> {
+  const res = await fetch(`${API_BASE}/admin/errors/summary`, { credentials: 'include' });
+  if (!res.ok) throw new Error(`Error summary fetch failed: ${res.status}`);
+  return res.json();
+}
+
+export async function fetchErrorGroup(fingerprint: string): Promise<ErrorGroupDetail> {
+  const res = await fetch(`${API_BASE}/admin/errors/${encodeURIComponent(fingerprint)}`, {
+    credentials: 'include',
+  });
+  if (!res.ok) throw new Error(`Error group fetch failed: ${res.status}`);
+  return res.json();
+}
+
+export async function setErrorStatus(
+  fingerprint: string,
+  status: ErrorGroupStatus,
+  note?: string,
+): Promise<{ fingerprint: string; status: ErrorGroupStatus; note: string | null }> {
+  const res = await fetch(`${API_BASE}/admin/errors/${encodeURIComponent(fingerprint)}/status`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify({ status, note }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+    throw new Error(err.error || `Status update failed: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function deleteErrorGroup(
+  fingerprint: string,
+): Promise<{ fingerprint: string; deletedEvents: number }> {
+  const res = await fetch(`${API_BASE}/admin/errors/${encodeURIComponent(fingerprint)}`, {
+    method: 'DELETE',
+    credentials: 'include',
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+    throw new Error(err.error || `Delete failed: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function purgeErrors(body: {
+  all?: boolean;
+  status?: ErrorGroupStatus;
+  olderThanDays?: number;
+}): Promise<{ deletedEvents: number }> {
+  const res = await fetch(`${API_BASE}/admin/errors/purge`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+    throw new Error(err.error || `Purge failed: ${res.status}`);
+  }
+  return res.json();
 }

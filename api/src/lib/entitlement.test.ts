@@ -2,9 +2,11 @@ import { describe, it, expect } from 'vitest';
 import {
   computeIsPro,
   downloadLimitFor,
+  isProByEmail,
   isQualityAllowed,
   lookupLimitFor,
   nextUtcMidnight,
+  resolveEntitlementByEmail,
   secondsUntilUtcMidnight,
   utcDayStamp,
   type Entitlement,
@@ -77,5 +79,72 @@ describe('computeIsPro', () => {
   it('is false when canceled or still on the free plan', () => {
     expect(computeIsPro({ plan: 'free', status: 'active', current_period_end: future }, now)).toBe(false);
     expect(computeIsPro({ plan: 'pro', status: 'canceled', current_period_end: future }, now)).toBe(false);
+  });
+});
+
+describe('resolveEntitlementByEmail', () => {
+  type FakeOpts = { cached?: string | null; row?: Record<string, unknown> | null };
+  function fakeFastify(opts: FakeOpts) {
+    return {
+      valkey: {
+        get: async () => opts.cached ?? null,
+        set: async () => 'OK',
+      },
+      pg: { query: async () => ({ rows: opts.row ? [opts.row] : [] }) },
+      log: { warn: () => {} },
+    } as unknown as Parameters<typeof resolveEntitlementByEmail>[0];
+  }
+
+  it('returns pro from a cache hit without the db, lower-casing the email', async () => {
+    const ent = await resolveEntitlementByEmail(fakeFastify({ cached: 'pro' }), 'A@B.com');
+    expect(ent.isPro).toBe(true);
+    expect(ent.tier).toBe('pro');
+    expect(ent.identity).toBe('a@b.com');
+    expect(ent.email).toBe('a@b.com');
+    expect(ent.loggedIn).toBe(true);
+  });
+
+  it('reads the db on a cache miss and computes pro from an active row', async () => {
+    const ent = await resolveEntitlementByEmail(
+      fakeFastify({
+        cached: null,
+        row: { plan: 'pro', status: 'active', current_period_end: '2999-01-01T00:00:00Z' },
+      }),
+      'x@y.com',
+    );
+    expect(ent.isPro).toBe(true);
+  });
+
+  it('fails open to free when there is no subscription row', async () => {
+    const ent = await resolveEntitlementByEmail(fakeFastify({ cached: null, row: null }), 'z@z.com');
+    expect(ent.isPro).toBe(false);
+    expect(ent.tier).toBe('free');
+    expect(ent.loggedIn).toBe(true);
+  });
+});
+
+describe('isProByEmail', () => {
+  function fake(opts: { cached?: string | null; row?: Record<string, unknown> | null; throws?: boolean }) {
+    return {
+      valkey: {
+        get: async () => {
+          if (opts.throws) throw new Error('valkey down');
+          return opts.cached ?? null;
+        },
+        set: async () => 'OK',
+      },
+      pg: { query: async () => ({ rows: opts.row ? [opts.row] : [] }) },
+      log: { warn: () => {} },
+    } as unknown as Parameters<typeof isProByEmail>[0];
+  }
+
+  it('returns true/false when the lookup succeeds', async () => {
+    expect(await isProByEmail(fake({ cached: "pro" }), "a@b.com")).toBe(true);
+    expect(await isProByEmail(fake({ cached: "free" }), "a@b.com")).toBe(false);
+    expect(await isProByEmail(fake({ cached: null, row: null }), "a@b.com")).toBe(false);
+  });
+
+  it('returns null (not false) when the lookup errors, so callers can avoid failing open', async () => {
+    expect(await isProByEmail(fake({ throws: true }), "a@b.com")).toBeNull();
   });
 });

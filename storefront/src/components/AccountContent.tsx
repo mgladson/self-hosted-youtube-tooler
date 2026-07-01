@@ -125,6 +125,10 @@ export function AccountContent() {
         </div>
       )}
 
+      <ApiKeysSection onNotice={setNotice} />
+
+      <CreditsSection />
+
       <div className="mt-10 flex flex-wrap gap-4">
         {isPro ? (
           <button
@@ -177,6 +181,280 @@ export function AccountContent() {
         </button>
       </div>
     </PageShell>
+  );
+}
+
+type ApiKey = {
+  id: string;
+  name: string | null;
+  key_prefix: string;
+  last_used_at: string | null;
+  revoked_at: string | null;
+  created_at: string;
+};
+
+// Developer API keys: list the caller's active keys, mint a new one (the secret is
+// shown exactly once), and revoke. All calls are same-origin with the session cookie;
+// errors bubble up to the shared account notice.
+function ApiKeysSection({ onNotice }: { onNotice: (msg: string | null) => void }) {
+  const [keys, setKeys] = useState<ApiKey[] | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [newSecret, setNewSecret] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+
+  const load = useCallback(() => {
+    fetch("/api/developer/api-keys", { credentials: "include" })
+      .then((r) => (r.ok ? r.json() : { keys: [] }))
+      .then((d: { keys?: ApiKey[] }) => setKeys(d.keys ?? []))
+      .catch(() => setKeys([]));
+  }, []);
+
+  useEffect(() => load(), [load]);
+
+  const create = useCallback(async () => {
+    setBusy(true);
+    onNotice(null);
+    try {
+      const res = await fetch("/api/developer/api-keys", { method: "POST", credentials: "include" });
+      const body = (await res.json().catch(() => ({}))) as { secret?: string; error?: string };
+      if (res.ok && body.secret) {
+        setNewSecret(body.secret);
+        setCopied(false);
+        load();
+      } else {
+        onNotice(body.error || "Could not create a key. Please try again.");
+      }
+    } catch {
+      onNotice("Could not create a key. Please try again.");
+    } finally {
+      setBusy(false);
+    }
+  }, [load, onNotice]);
+
+  const revoke = useCallback(
+    async (id: string) => {
+      setBusy(true);
+      onNotice(null);
+      try {
+        const res = await fetch(`/api/developer/api-keys/${id}`, {
+          method: "DELETE",
+          credentials: "include",
+        });
+        if (!res.ok) {
+          const body = (await res.json().catch(() => ({}))) as { error?: string };
+          onNotice(body.error || "Could not revoke the key.");
+        }
+        load();
+      } catch {
+        onNotice("Could not revoke the key.");
+      } finally {
+        setBusy(false);
+      }
+    },
+    [load, onNotice],
+  );
+
+  const active = (keys ?? []).filter((k) => !k.revoked_at);
+
+  return (
+    <section className="mt-14 border-t border-rule pt-10">
+      <div className="flex flex-wrap items-end justify-between gap-4">
+        <div>
+          <p className="label-eyebrow text-ink">Developer API</p>
+          <p className="mt-1 max-w-[520px] font-body text-[14px] text-ink-soft">
+            Keys authenticate the REST API. Read the{" "}
+            <a href="/docs" className="text-ochre underline underline-offset-2 hover:text-ochre-deep">
+              API docs
+            </a>{" "}
+            to get started.
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={create}
+          disabled={busy}
+          className="border border-ochre bg-ochre px-6 py-3 font-mono text-[12px] uppercase tracking-[0.18em] text-paper transition-colors hover:bg-ochre-deep disabled:opacity-50"
+        >
+          {busy ? "Working…" : "Create key"}
+        </button>
+      </div>
+
+      {newSecret && (
+        <div className="mt-6 border border-ochre bg-paper-warm p-4">
+          <p className="label-eyebrow text-ink">Your new key — copy it now</p>
+          <p className="mt-2 font-body text-[13px] text-ink-soft">
+            This is the only time we will show it. Store it somewhere safe.
+          </p>
+          <div className="mt-3 flex flex-wrap items-center gap-3">
+            <code className="break-all border border-rule bg-paper px-3 py-2 font-mono text-[13px] text-ink">
+              {newSecret}
+            </code>
+            <button
+              type="button"
+              onClick={() => {
+                navigator.clipboard?.writeText(newSecret).then(
+                  () => setCopied(true),
+                  () => setCopied(false),
+                );
+              }}
+              className="border border-ink/60 px-4 py-2 font-mono text-[11px] uppercase tracking-[0.16em] text-ink-soft transition-colors hover:border-ochre hover:text-ochre"
+            >
+              {copied ? "Copied" : "Copy"}
+            </button>
+            <button
+              type="button"
+              onClick={() => setNewSecret(null)}
+              className="border border-ink/60 px-4 py-2 font-mono text-[11px] uppercase tracking-[0.16em] text-ink-soft transition-colors hover:border-ochre hover:text-ochre"
+            >
+              Done
+            </button>
+          </div>
+        </div>
+      )}
+
+      <div className="mt-6">
+        {keys === null ? (
+          <p className="font-body text-[14px] italic text-ink-muted">Loading keys…</p>
+        ) : active.length === 0 ? (
+          <p className="font-body text-[14px] text-ink-muted">No API keys yet.</p>
+        ) : (
+          <ul className="divide-y divide-rule border border-rule">
+            {active.map((k) => (
+              <li
+                key={k.id}
+                className="flex flex-wrap items-center justify-between gap-3 p-4"
+              >
+                <div>
+                  <p className="font-mono text-[13px] text-ink">
+                    {k.key_prefix}
+                    <span className="text-ink-muted">…</span>
+                    {k.name ? <span className="ml-2 text-ink-soft">({k.name})</span> : null}
+                  </p>
+                  <p className="mt-1 font-body text-[12px] text-ink-muted">
+                    Created {new Date(k.created_at).toLocaleDateString()}
+                    {" · "}
+                    {k.last_used_at
+                      ? `last used ${new Date(k.last_used_at).toLocaleDateString()}`
+                      : "never used"}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => revoke(k.id)}
+                  disabled={busy}
+                  className="border border-ink/60 px-4 py-2 font-mono text-[11px] uppercase tracking-[0.16em] text-ink-soft transition-colors hover:border-crimson hover:text-crimson disabled:opacity-50"
+                >
+                  Revoke
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+    </section>
+  );
+}
+
+type LedgerEntry = {
+  id: string;
+  delta: number;
+  reason: string;
+  balance_after: number;
+  ref: string | null;
+  created_at: string;
+};
+
+// API credit balance + recent ledger. Renders nothing until the account has a credit
+// row (i.e. after the first key is created), so it stays quiet for non-developers.
+function CreditsSection() {
+  const [data, setData] = useState<{ balance: number; ledger: LedgerEntry[] } | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetch("/api/developer/credits", { credentials: "include" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d: { balance: number; ledger: LedgerEntry[] } | null) => setData(d))
+      .catch(() => setData(null));
+  }, []);
+
+  const buy = useCallback(async () => {
+    setBusy(true);
+    setErr(null);
+    try {
+      const res = await fetch("/api/developer/credits/checkout", {
+        method: "POST",
+        credentials: "include",
+      });
+      const body = (await res.json().catch(() => ({}))) as { url?: string; error?: string };
+      if (res.ok && body.url) {
+        window.location.href = body.url;
+        return;
+      }
+      setErr(body.error || "Credit purchases aren't available just yet.");
+    } catch {
+      setErr("Credit purchases aren't available just yet.");
+    } finally {
+      setBusy(false);
+    }
+  }, []);
+
+  // Only surface credits once the account has engaged with the API (a key mints the
+  // welcome grant), so casual account visitors don't see a developer billing widget.
+  if (!data || (data.balance === 0 && data.ledger.length === 0)) return null;
+
+  return (
+    <section className="mt-14 border-t border-rule pt-10">
+      <div className="flex flex-wrap items-end justify-between gap-4">
+        <div>
+          <p className="label-eyebrow text-ink">API credits</p>
+          <p className="mt-2 font-mono text-[28px] text-ink">
+            {data.balance}
+            <span className="text-[16px] text-ink-muted"> credits</span>
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={buy}
+          disabled={busy}
+          className="border border-ochre bg-ochre px-6 py-3 font-mono text-[12px] uppercase tracking-[0.18em] text-paper transition-colors hover:bg-ochre-deep disabled:opacity-50"
+        >
+          {busy ? "Starting…" : "Buy credits"}
+        </button>
+      </div>
+      {err && (
+        <div className="mt-4 border border-rule bg-paper-warm p-3 font-body text-[13px] text-ink-soft">
+          {err}
+        </div>
+      )}
+      {data.ledger.length > 0 && (
+        <ul className="mt-6 divide-y divide-rule border border-rule">
+          {data.ledger.map((e) => (
+            <li key={e.id} className="flex items-center justify-between gap-3 p-4">
+              <div>
+                <p className="font-body text-[13px] capitalize text-ink">
+                  {e.reason.replace(/[:_]/g, " ")}
+                </p>
+                <p className="mt-1 font-body text-[12px] text-ink-muted">
+                  {new Date(e.created_at).toLocaleString()}
+                </p>
+              </div>
+              <div className="text-right">
+                <p
+                  className={`font-mono text-[14px] ${
+                    e.delta >= 0 ? "text-ochre" : "text-ink-soft"
+                  }`}
+                >
+                  {e.delta >= 0 ? "+" : ""}
+                  {e.delta}
+                </p>
+                <p className="mt-1 font-mono text-[11px] text-ink-muted">bal {e.balance_after}</p>
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
   );
 }
 

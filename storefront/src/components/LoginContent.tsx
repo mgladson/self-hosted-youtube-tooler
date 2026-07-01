@@ -26,7 +26,7 @@ export function LoginContent() {
   return (
     <PageShell
       title="Sign in"
-      intro="Sign in with Google to download videos, raise your daily limits, and manage your plan."
+      intro="Sign in with Google to raise your daily limits and manage your plan."
     >
       {error && (
         <div className="mb-8 border border-crimson/60 bg-paper-warm p-5 font-body text-[15px] text-crimson">

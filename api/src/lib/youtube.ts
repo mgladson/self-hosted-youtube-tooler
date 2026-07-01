@@ -6,14 +6,12 @@
 // core port.
 
 import { spawn } from 'node:child_process';
-import { mkdtemp, readdir, readFile, rm } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+import { mkdtemp, readdir, readFile, rm, stat } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
 const YT_DLP_BIN = process.env.YT_DLP_PATH || 'yt-dlp';
-// Optional outbound proxy for yt-dlp (e.g. a rotating residential proxy) so the
-// scraping traffic doesn't all originate from one server IP. Empty = direct.
-const YT_DLP_PROXY = process.env.YT_DLP_PROXY || '';
 const DEFAULT_TIMEOUT_MS = 120_000;
 
 export type YouTubeErrorCode =
@@ -131,11 +129,121 @@ export function formatDuration(totalSeconds: number): string {
 }
 
 // ---------------------------------------------------------------------------
+// Multi-source support (download path)
+// ---------------------------------------------------------------------------
+
+// Allowlist of sites the download tool accepts, keyed by host (sans leading
+// www./m.) or registrable domain → a short source name. This is the primary SSRF
+// guard (only these public video hosts are reachable server-side) and keeps the
+// tool to mainstream sites rather than every yt-dlp extractor. Add hosts to widen.
+const MEDIA_SOURCES: Record<string, string> = {
+  'youtube.com': 'youtube',
+  'youtu.be': 'youtube',
+  'vimeo.com': 'vimeo',
+  'dailymotion.com': 'dailymotion',
+  'dai.ly': 'dailymotion',
+  'tiktok.com': 'tiktok',
+  'twitch.tv': 'twitch',
+  'soundcloud.com': 'soundcloud',
+  'twitter.com': 'twitter',
+  'x.com': 'twitter',
+  'reddit.com': 'reddit',
+};
+
+export type ResolvedSource = { url: string; source: string };
+
+/** Validate a URL for the multi-source download path and name its source.
+ *  Accepts only http(s) links on an allowlisted host (the SSRF guard) and returns
+ *  the URL unchanged. Throws `invalid_url` otherwise. Exported for unit testing. */
+export function assertAllowedUrl(input: string): ResolvedSource {
+  let parsed: URL;
+  try {
+    parsed = new URL((input || '').trim());
+  } catch {
+    throw new YouTubeError('Enter a full video URL (including https://).', 'invalid_url');
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    throw new YouTubeError('Only http and https links are supported.', 'invalid_url');
+  }
+  if (parsed.username || parsed.password) {
+    throw new YouTubeError('That is not a supported video link.', 'invalid_url');
+  }
+  const host = parsed.hostname.replace(/^(www\.|m\.)/, '').toLowerCase();
+  // Reject bare/localhost and IP-literal hosts (defense in depth against SSRF).
+  if (!host.includes('.') || /^\d{1,3}(\.\d{1,3}){3}$/.test(host)) {
+    throw new YouTubeError('That is not a supported video site.', 'invalid_url');
+  }
+  const registrable = host.split('.').slice(-2).join('.');
+  const source = MEDIA_SOURCES[host] ?? MEDIA_SOURCES[registrable];
+  if (!source) {
+    throw new YouTubeError(
+      'Unsupported site. Supported: YouTube, Vimeo, Dailymotion, TikTok, Twitch, SoundCloud, X, Reddit.',
+      'invalid_url',
+    );
+  }
+  return { url: parsed.toString(), source };
+}
+
+/** Resolve any download-tool input to the URL handed to yt-dlp plus its source.
+ *  YouTube URLs and bare 11-char ids are canonicalized; everything else must pass
+ *  the allowlist. */
+function resolveDownloadTarget(input: string): ResolvedSource {
+  const ytId = extractVideoId(input);
+  if (ytId) return { url: canonicalUrl(ytId), source: 'youtube' };
+  return assertAllowedUrl(input);
+}
+
+/** A stable cache/storage key for a media input, computable before the fetch.
+ *  YouTube keeps its 11-char id so every URL form of a video dedups; other sources
+ *  hash their query/hash-stripped URL. Throws for unsupported input. Exported for
+ *  the routes and unit testing. */
+export function mediaKey(input: string): string {
+  const ytId = extractVideoId(input);
+  if (ytId) return `yt:${ytId}`;
+  const { url, source } = assertAllowedUrl(input);
+  let norm = url;
+  try {
+    const u = new URL(url);
+    u.hash = '';
+    u.search = '';
+    norm = u.toString().replace(/\/+$/, '');
+  } catch {
+    // keep url as-is
+  }
+  return `${source}:${createHash('sha1').update(norm).digest('hex').slice(0, 16)}`;
+}
+
+// ---------------------------------------------------------------------------
 // yt-dlp process runner
 // ---------------------------------------------------------------------------
 
+// Optional outbound proxy pool so yt-dlp's scraping and download traffic does
+// not all originate from the server's own IP. YT_DLP_PROXY holds one proxy URL,
+// or several (comma- or whitespace-separated) ISP / static-residential IPs to
+// spread load across a pool. Exported for unit testing.
+export function parseProxyList(raw: string | undefined): string[] {
+  return (raw || '').split(/[\s,]+/).map((s) => s.trim()).filter(Boolean);
+}
+
+const YT_DLP_PROXIES = parseProxyList(process.env.YT_DLP_PROXY);
+let proxyCursor = 0;
+
+// One proxy per invocation, round-robin. Each yt-dlp process keeps the single IP
+// it is handed for its whole lifetime, so a download's player-API call and its
+// media fetch share one IP. YouTube 403s the media URL if the IP changes
+// mid-download, so a per-request rotating gateway would break downloads; a pool
+// of dedicated/sticky IPs does not. Returns null when no pool is configured, so
+// yt-dlp then runs without a proxy (direct).
+function pickProxy(): string | null {
+  if (YT_DLP_PROXIES.length === 0) return null;
+  const proxy = YT_DLP_PROXIES[proxyCursor];
+  proxyCursor = (proxyCursor + 1) % YT_DLP_PROXIES.length;
+  return proxy;
+}
+
 function runYtDlp(args: string[], timeoutMs: number): Promise<string> {
-  const fullArgs = YT_DLP_PROXY ? ['--proxy', YT_DLP_PROXY, ...args] : args;
+  const proxy = pickProxy();
+  const fullArgs = proxy ? ['--proxy', proxy, ...args] : args;
   return new Promise((resolve, reject) => {
     const child = spawn(YT_DLP_BIN, fullArgs, { windowsHide: true });
     let stdout = '';
@@ -314,6 +422,109 @@ export async function getVideoMetadata(
     throw new YouTubeError('yt-dlp returned invalid JSON metadata.', 'fetch_failed');
   }
   return mapMetadata(parsed, url);
+}
+
+// ---------------------------------------------------------------------------
+// Playlist enumeration (flat, one cheap call)
+// ---------------------------------------------------------------------------
+
+export type PlaylistEntry = {
+  videoId: string;
+  title: string;
+  duration: number | null; // seconds; null when yt-dlp omits it (e.g. unavailable)
+};
+
+export type PlaylistEnumeration = {
+  playlistId: string;
+  title: string;
+  totalCount: number; // best-effort true playlist size (yt-dlp playlist_count when present)
+  capped: boolean; // the playlist has more videos than `entries` (bounded by maxVideos)
+  entries: PlaylistEntry[]; // capped to the requested maximum
+};
+
+const PLAYLIST_ID_RE = /^[a-zA-Z0-9_-]{13,64}$/;
+
+/** Pull a playlist id from a `list=` URL param, or accept a bare playlist id. Returns
+ *  null for a plain video URL with no list, or anything malformed. A bare 11-char video
+ *  id is excluded by the length bound, so this never mistakes a video for a playlist. */
+export function extractPlaylistId(input: string): string | null {
+  const s = (input || '').trim();
+  if (!s) return null;
+  // Read a `list=` param, tolerating a URL pasted without a scheme (https:// is
+  // prepended on the retry) so `youtube.com/playlist?list=…` works like extractVideoId.
+  const candidates = /^https?:\/\//i.test(s) ? [s] : [s, `https://${s}`];
+  for (const candidate of candidates) {
+    try {
+      const list = new URL(candidate).searchParams.get('list');
+      if (list && PLAYLIST_ID_RE.test(list)) return list;
+    } catch {
+      // not a URL — try the next candidate, then bare-id handling
+    }
+  }
+  return PLAYLIST_ID_RE.test(s) ? s : null;
+}
+
+export function canonicalPlaylistUrl(playlistId: string): string {
+  return `https://www.youtube.com/playlist?list=${playlistId}`;
+}
+
+/** Map a `--flat-playlist --dump-single-json` blob into the public enumeration shape,
+ *  keeping only entries with a valid 11-char video id and capping to `maxVideos`.
+ *  Exported for unit testing. */
+export function mapPlaylistEntries(
+  j: RawMeta,
+  playlistId: string,
+  maxVideos: number,
+): PlaylistEnumeration {
+  const raw = Array.isArray(j.entries) ? j.entries : [];
+  const valid: PlaylistEntry[] = [];
+  for (const e of raw) {
+    if (!e || typeof e !== 'object') continue; // yt-dlp emits null placeholders for some items
+    const o = e as RawMeta;
+    const videoId = str(o.id);
+    if (!/^[a-zA-Z0-9_-]{11}$/.test(videoId)) continue;
+    const dur = numOrNull(o.duration);
+    // Floor to an integer: durations feed an int[] column, and Postgres' array cast
+    // (unlike a scalar cast) rejects a fractional value.
+    valid.push({ videoId, title: str(o.title), duration: dur == null ? null : Math.floor(dur) });
+  }
+  const entries = valid.slice(0, maxVideos);
+  const pc = numOrNull(j.playlist_count);
+  const totalCount = pc != null && pc > entries.length ? pc : entries.length;
+  // getPlaylistEntries enumerates maxVideos+1, so more-than-maxVideos RAW entries prove
+  // the playlist is truncated by our cap even when yt-dlp omits playlist_count. Counting
+  // raw (not valid) means a null/unavailable placeholder in the probe window cannot mask
+  // a real truncation.
+  const capped = raw.length > maxVideos;
+  return { playlistId: str(j.id) || playlistId, title: str(j.title), totalCount, capped, entries };
+}
+
+/** Enumerate a playlist's videos with a single flat call, bounded to `maxVideos` at the
+ *  yt-dlp level so a huge channel/uploads playlist is never fully walked or buffered.
+ *  Takes the validated playlist id and only ever runs a canonical youtube.com URL. */
+export async function getPlaylistEntries(
+  playlistId: string,
+  opts: { timeoutMs?: number; maxVideos?: number } = {},
+): Promise<PlaylistEnumeration> {
+  const maxVideos = opts.maxVideos && opts.maxVideos > 0 ? opts.maxVideos : 50;
+  const out = await runYtDlp(
+    [
+      '--flat-playlist',
+      '--playlist-end',
+      String(maxVideos + 1), // one extra so mapPlaylistEntries can detect truncation
+      '--dump-single-json',
+      '--no-warnings',
+      canonicalPlaylistUrl(playlistId),
+    ],
+    opts.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+  );
+  let j: RawMeta;
+  try {
+    j = JSON.parse(out) as RawMeta;
+  } catch {
+    throw new YouTubeError('yt-dlp returned invalid playlist JSON.', 'fetch_failed');
+  }
+  return mapPlaylistEntries(j, playlistId, maxVideos);
 }
 
 // ---------------------------------------------------------------------------
@@ -533,6 +744,7 @@ export async function extractYouTube(
 export type AvailableFormats = {
   videoId: string;
   title: string;
+  webpageUrl: string; // yt-dlp's canonical page URL for the video (any source)
   heights: number[]; // ascending unique video resolutions, e.g. [144,360,720,1080]
   hasAudio: boolean;
 };
@@ -543,12 +755,9 @@ export async function getAvailableFormats(
   url: string,
   opts: { timeoutMs?: number } = {},
 ): Promise<AvailableFormats> {
-  const videoId = extractVideoId(url);
-  if (!videoId) {
-    throw new YouTubeError('Could not extract a YouTube video id from the input.', 'invalid_url');
-  }
+  const { url: target } = resolveDownloadTarget(url);
   const out = await runYtDlp(
-    ['--dump-json', '--no-download', '--no-playlist', canonicalUrl(videoId)],
+    ['--dump-json', '--no-download', '--no-playlist', target],
     opts.timeoutMs ?? DEFAULT_TIMEOUT_MS,
   );
   let j: RawMeta;
@@ -568,8 +777,9 @@ export async function getAvailableFormats(
     if (vcodec !== 'none' && height && height > 0) heightSet.add(height);
   }
   return {
-    videoId,
+    videoId: str(j.id),
     title: str(j.title),
+    webpageUrl: str(j.webpage_url) || target,
     heights: [...heightSet].sort((a, b) => a - b),
     hasAudio,
   };
@@ -580,10 +790,15 @@ export type DownloadResult = {
   filePath: string;
   filename: string; // yt-dlp-sanitized (--restrict-filenames → ASCII, header-safe)
   contentType: string;
+  bytes: number; // on-disk size of filePath; approximates bytes pulled through the proxy
 };
 
 const DOWNLOAD_QUALITIES = new Set(['audio', '360', '480', '720', '1080', '1440', '2160']);
 const DOWNLOAD_TIMEOUT_MS = 15 * 60_000;
+// Fetch DASH fragments in parallel for higher download throughput. 4 is a safe
+// default; much higher risks YouTube throttling a single proxy IP. Harmless
+// (no-op) for progressive, non-fragmented formats.
+const DOWNLOAD_CONCURRENT_FRAGMENTS = 4;
 
 /** Download a video (best ≤ requested height, merged to mp4 via ffmpeg) or the
  *  audio only (mp3) into a fresh temp dir. The caller streams `filePath` to the
@@ -596,11 +811,7 @@ export async function downloadMedia(
   if (!DOWNLOAD_QUALITIES.has(quality)) {
     throw new YouTubeError(`Unsupported quality "${quality}".`, 'invalid_url');
   }
-  const videoId = extractVideoId(url);
-  if (!videoId) {
-    throw new YouTubeError('Could not extract a YouTube video id from the input.', 'invalid_url');
-  }
-  const canonical = canonicalUrl(videoId);
+  const { url: target } = resolveDownloadTarget(url);
   const dir = await mkdtemp(path.join(os.tmpdir(), 'yt-dl-'));
   const outTemplate = path.join(dir, '%(title).80s.%(ext)s');
 
@@ -613,8 +824,9 @@ export async function downloadMedia(
     ? [
         '-f', 'bestaudio/best',
         '-x', '--audio-format', 'mp3', '--audio-quality', '0',
+        '--concurrent-fragments', String(DOWNLOAD_CONCURRENT_FRAGMENTS),
         '--no-playlist', '--no-progress', '--no-warnings', '--restrict-filenames',
-        '-o', outTemplate, canonical,
+        '-o', outTemplate, target,
       ]
     : [
         // Prefer H.264 video + AAC audio for universal playback; fall back to the
@@ -623,8 +835,9 @@ export async function downloadMedia(
         '-f',
         `bestvideo[height<=${height}][vcodec^=avc1]+bestaudio[acodec^=mp4a]/bestvideo[height<=${height}]+bestaudio/best[height<=${height}]`,
         '--merge-output-format', 'mp4',
+        '--concurrent-fragments', String(DOWNLOAD_CONCURRENT_FRAGMENTS),
         '--no-playlist', '--no-progress', '--no-warnings', '--restrict-filenames',
-        '-o', outTemplate, canonical,
+        '-o', outTemplate, target,
       ];
 
   try {
@@ -634,7 +847,9 @@ export async function downloadMedia(
     if (!file) {
       throw new YouTubeError('Download produced no output file.', 'fetch_failed');
     }
-    return { dir, filePath: path.join(dir, file), filename: file, contentType };
+    const filePath = path.join(dir, file);
+    const { size: bytes } = await stat(filePath);
+    return { dir, filePath, filename: file, contentType, bytes };
   } catch (err) {
     await rm(dir, { recursive: true, force: true }).catch(() => {});
     throw err;

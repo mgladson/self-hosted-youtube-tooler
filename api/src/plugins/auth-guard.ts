@@ -51,6 +51,7 @@ const PUBLIC_PREFIXES = [
   '/api/download/', // order-token-gated; no session required
   '/api/blog',      // public blog listing, post detail, and RSS feed
   '/api/youtube',   // public youtube extractor (cached + per-IP rate limited)
+  '/api/v1/',       // public developer API — authenticated per-request by API key (Bearer)
   // NOT publicly readable — every invoice route requires an admin session. Listed
   // here only so the Create Invoice GH Action's X-Service-Token request reaches the
   // route's own guard (POST create + POST :id/email validate the token there).

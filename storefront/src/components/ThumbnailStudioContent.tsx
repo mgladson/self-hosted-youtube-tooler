@@ -160,8 +160,8 @@ export function ThumbnailStudioContent() {
 
   return (
     <PageShell
-      title="YouTube Thumbnail Downloader"
-      intro="A YouTube thumbnail downloader grabs the cover image of any public video at full resolution. Paste a link to save the thumbnail at up to 1280x720, plus HQ, SD, and auto-extracted frame grabs. Every size is free to copy or download."
+      title="YouTube Thumbnail Grabber"
+      intro="A YouTube thumbnail grabber saves the cover image of any public video at full resolution. Paste a link to save the thumbnail at up to 1280x720, plus HQ, SD, and auto-extracted frame grabs. Every size is free to copy or download."
       wide
       toolTabs
       compact={!!videoId}

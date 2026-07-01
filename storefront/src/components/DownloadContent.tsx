@@ -16,6 +16,7 @@ const API_BASE = process.env.NEXT_PUBLIC_API_URL || "";
 type FormatsResult = {
   videoId: string;
   title: string;
+  webpageUrl: string;
   heights: number[];
   hasAudio: boolean;
 };
@@ -82,7 +83,7 @@ export function DownloadContent() {
     [url, loading],
   );
 
-  const videoUrl = info ? `https://www.youtube.com/watch?v=${info.videoId}` : "";
+  const videoUrl = info?.webpageUrl ?? "";
   const dlHref = (quality: string) =>
     `${API_BASE}/youtube/download?url=${encodeURIComponent(videoUrl)}&quality=${quality}`;
 
@@ -94,8 +95,8 @@ export function DownloadContent() {
 
   return (
     <PageShell
-      title="YouTube Video Downloader"
-      intro="A YouTube video downloader saves any public video as a file on your device. Paste a link to download the full video at up to 4K, or pull just the audio as an MP3. No software to install and no account needed."
+      title="Video & Audio Export"
+      intro="Save the video or audio from a public link on YouTube, Vimeo, TikTok, and more: the full video up to 4K, or just the audio as an MP3. Runs in your browser, with no software to install and no account needed."
       wide
       toolTabs
       compact={!!info}
@@ -105,9 +106,9 @@ export function DownloadContent() {
             type="text"
             value={url}
             onChange={(e) => setUrl(e.target.value)}
-            placeholder="https://www.youtube.com/watch?v=…"
+            placeholder="Paste a video link (YouTube, Vimeo, TikTok, …)"
             className="flex-1 border border-ink/70 bg-paper px-4 py-3 font-body text-[16px] text-ink outline-none focus:border-ochre"
-            aria-label="YouTube URL"
+            aria-label="Video URL"
           />
           <button
             type="submit"
@@ -173,7 +174,7 @@ export function DownloadContent() {
         className={`mt-20 border-t-2 border-rule-strong pt-12 ${info ? "hidden" : ""}`}
       >
         <h2 className="font-display text-[26px] font-bold leading-tight tracking-[-0.01em] text-ink md:text-[32px]">
-          Why download a YouTube video
+          Why export a video or its audio
         </h2>
         <p className="mt-4 max-w-[720px] font-body text-[16px] leading-[1.75] text-ink-soft md:text-[17px]">
           {"A local copy plays without buffering or ads, works offline on a flight or commute, and gives you a master file for editing, archiving, or reuse where you hold the rights. Pulling only the audio turns a talk, lecture, or song into an MP3 you can play anywhere."}
@@ -193,7 +194,7 @@ export function DownloadContent() {
           How it works
         </h2>
         <ol className="mt-4 max-w-[720px] list-decimal space-y-2 pl-5 font-body text-[16px] leading-[1.75] text-ink-soft md:text-[17px]">
-          <li>{"Copy the link to any public YouTube video."}</li>
+          <li>{"Copy the link to a video on a supported site."}</li>
           <li>{"Paste it above and select Load to see the available qualities."}</li>
           <li>{"Choose a resolution or Audio (MP3), and the file saves to your device."}</li>
         </ol>

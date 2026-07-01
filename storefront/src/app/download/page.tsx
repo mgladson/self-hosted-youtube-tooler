@@ -3,9 +3,9 @@ import { DownloadContent } from "@/components/DownloadContent";
 import { buildMetadata } from "@/lib/seo";
 
 export const metadata: Metadata = buildMetadata({
-  title: "Free YouTube Video Downloader",
+  title: "Video & Audio Export: YouTube, Vimeo, TikTok & More",
   description:
-    "Download any public YouTube video as MP4 at up to 4K, or save just the audio as an MP3. Files are prepared on the server, with no software to install.",
+    "Export the video or audio track from a public link on YouTube, Vimeo, TikTok, and more: MP4 up to 4K or MP3 audio, prepared on the server with nothing to install.",
   path: "/download",
 });
 

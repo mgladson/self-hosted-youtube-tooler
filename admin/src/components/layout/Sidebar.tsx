@@ -5,6 +5,7 @@ import {
   Home, BarChart3, Package, FolderOpen, ShoppingBag, Users,
   Mail, Megaphone, Settings, LogOut, X, DollarSign, Receipt,
   Percent, ChevronDown, Eye, MousePointer, Headphones, FileText, Rss, History, Shield, BookOpen, Star,
+  AlertTriangle,
 } from '@/lib/icons';
 import { useAuth } from '@/contexts/AuthContext';
 import { useOrders } from '@/lib/hooks';
@@ -220,6 +221,7 @@ export function Sidebar({ open, onClose }: SidebarProps) {
           <NavItem to="/admin/discounts" label="Discounts" icon={Percent} />
           <NavItem to="/admin/analytics" label="Analytics" icon={BarChart3} />
           <NavItem to="/admin/insights" label="User Insights" icon={MousePointer} />
+          <NavItem to="/admin/subscriptions" label="Subscriptions" icon={DollarSign} />
 
           <div className="my-3 border-t border-sidebar-border" />
 
@@ -249,6 +251,7 @@ export function Sidebar({ open, onClose }: SidebarProps) {
           <div className="my-3 border-t border-sidebar-border" />
 
           <NavItem to="/admin/security" label="Security" icon={Shield} />
+          <NavItem to="/admin/technical" label="Technical" icon={AlertTriangle} />
           <NavItem to="/admin/settings" label="Settings" icon={Settings} />
           <NavItem to="/admin/audit-log" label="Audit Log" icon={History} />
         </nav>

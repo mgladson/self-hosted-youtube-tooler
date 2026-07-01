@@ -33,6 +33,7 @@ const ROWS: Row[] = [
   { label: "Audio (MP3) & up to 720p downloads", compute: "server", free: true, pro: true, freeNote: "3 / day", proNote: "Unlimited" },
   { label: "HD downloads: 1080p, 1440p & 4K", compute: "server", free: false, pro: true },
   { label: "Unlimited daily downloads", compute: "server", free: false, pro: true },
+  { label: "Playlist batch: metadata, tags, thumbnails & transcripts", compute: "server", free: false, pro: true },
   { label: "Priority processing: no throttling", compute: "server", free: false, pro: true },
 ];
 

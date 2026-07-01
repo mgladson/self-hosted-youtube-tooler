@@ -38,44 +38,6 @@ export function FaqContent() {
     <PageShell title={t.faq.title} intro={t.faq.intro}>
       <FaqList items={t.faq.items} />
 
-      <article className="mt-20 border-t-2 border-rule-strong pt-12">
-        {t.faq.article.map((block, i) => {
-          if (block.kind === "h2") {
-            return (
-              <h2
-                key={i}
-                className="mt-12 font-display text-[26px] font-bold leading-tight tracking-[-0.01em] text-ink first:mt-0 md:text-[32px]"
-              >
-                {block.text}
-              </h2>
-            );
-          }
-          if (block.kind === "h3") {
-            return (
-              <h3
-                key={i}
-                className="mt-8 font-display text-[18px] font-semibold leading-snug tracking-[-0.01em] text-ink md:text-[20px]"
-              >
-                {block.text}
-              </h3>
-            );
-          }
-          return (
-            <p
-              key={i}
-              className="mt-4 max-w-[720px] font-body text-[16px] leading-[1.75] text-ink-soft md:text-[17px]"
-            >
-              {block.text}
-            </p>
-          );
-        })}
-      </article>
-
-      <h2 className="mt-16 font-display text-[26px] font-bold leading-tight tracking-[-0.01em] text-ink md:text-[32px]">
-        Frequently Asked Questions
-      </h2>
-      <FaqList items={t.faq.converterFaq} />
-
       <p className="mt-12 font-body text-[15px] italic leading-[1.7] text-ink-muted">
         Still curious about plans and daily limits? See the{" "}
         <Link
